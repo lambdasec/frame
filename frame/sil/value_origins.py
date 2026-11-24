@@ -31,11 +31,12 @@ PATH = Path(__file__).parent / "specs" / "data" / "value-types.toml"
 
 
 def _call_text(call: Call) -> Optional[str]:
+    """The callee as a dotted name; an optional call (`m?.get()`) calls the same method."""
     f = call.func
     if isinstance(f, ExpConst) and isinstance(f.value, str):
-        return f.value
+        return f.value.replace("?.", ".")
     if isinstance(f, ExpVar):
-        return str(f.var)
+        return str(f.var).replace("?.", ".")
     parts = []
     while type(f).__name__ == "ExpFieldAccess":         # `db.collection(...)` written in an expression
         parts.insert(0, f.field_name)
@@ -179,8 +180,10 @@ def _origins(proc, outer: Dict[str, str], fill: bool, imports: Optional[Dict[str
     through = passes("python") if python else {}
     receivers_ = {p.split(".", 1)[0] for p in origin if "." in p}          # `self` of `self.conn`
     receivers_ |= {p.split(".", 1)[0] for p in outer if "." in p and p.split(".", 1)[0] not in defs}
-    if True:                                            # a parameter declared as a library type
-        for name, text in (getattr(proc, "param_types", None) or {}).items():
+    if True:                                            # a parameter (or a TS local) declared as a library type
+        declared = dict(getattr(proc, "local_types", None) or {}) if not python else {}
+        declared.update(getattr(proc, "param_types", None) or {})
+        for name, text in declared.items():
             head, _, rest = text.partition(".")
             if name in origin or not head.isidentifier():
                 continue
@@ -443,6 +446,9 @@ def annotate(program, param_origins: Optional[Dict[str, Dict[str, str]]] = None)
         merged = {k: dict(v) for k, v in param_origins.items()}
         for name, extra in fields.items():
             merged.setdefault(name, {}).update({k: v for k, v in extra.items() if k not in merged.get(name, {})})
+        if not python:              # a TS field declared with a type holds one (after what the constructor sets)
+            for name, extra in _declared_field_origins(program, imports).items():
+                merged.setdefault(name, {}).update({k: v for k, v in extra.items() if k not in merged.get(name, {})})
         if merged != param_origins:
             param_origins = merged
             program.param_origins = merged
@@ -521,6 +527,26 @@ def _init_field_origins(program, scopes, python: bool = True) -> Dict[str, Dict[
                 continue
             recv = proc.params[0][0].name if python else "this"
             out[proc.name] = {f"{recv}.{f}": o for f, o in found.items()}
+    return out
+
+
+def _declared_field_origins(program, imports: Dict[str, str]) -> Dict[str, Dict[str, str]]:
+    """TypeScript: a field declared with an imported type (`protected repo_:
+    ModulesSdkTypes.IMedusaInternalService<T>`) holds a value of that type in the class's instance
+    methods (`this.repo_`), whatever the constructor assigns it (an injected container's
+    destructured argument names no type of its own)."""
+    out: Dict[str, Dict[str, str]] = {}
+    for cls, info in (getattr(program, "class_info", None) or {}).items():
+        typed: Dict[str, str] = {}
+        for field_name, written in (getattr(info, "field_types", None) or {}).items():
+            head, _, rest = str(written).partition(".")
+            if head in imports and head.isidentifier():
+                typed[field_name] = f"{imports[head]}.{rest}" if rest else imports[head]
+        if not typed:
+            continue
+        for proc in program.procedures.values():
+            if proc.is_method and proc.class_name == cls and not getattr(proc, "is_static", False):
+                out[proc.name] = {f"this.{f}": o for f, o in typed.items()}
     return out
 
 
@@ -825,6 +851,7 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                         i.pack_spec = None
             annotate(program, kept)
             program.origins_moved = True
+        moved: Dict[str, str] = {}                      # a module's call -> the id it took
         for proc in program.procedures.values():
             for i in _instrs(proc):
                 if isinstance(i, Call) and i.canonical is not None and i.canonical.startswith("."):
@@ -864,7 +891,36 @@ def link_modules(programs: Dict[str, object], resolve) -> None:
                             i.canonical = f"{held}.{rest}"
                         if i.canonical is not None:
                             program.origins_moved = True    # the packs' rules meet it now
+                            moved[text] = i.canonical
                         break
+        if moved:
+            _follow_moved(program, moved)
+
+
+def _follow_moved(program, moved: Dict[str, str]) -> None:
+    """Values computed from a call on a project module before the module's value was known
+    (`coupon = Coupon.findOne(...)`, held as `./models/coupon.findOne`) take the call's new id, and
+    so do the ids of calls on them (`coupon.save()` -> `mongoose.model.findOne.save`)."""
+    heads = sorted(moved, key=len, reverse=True)
+
+    def renamed(value: str) -> Optional[str]:
+        for h in heads:
+            if value == h or value.startswith(h + "."):
+                return moved[h] + value[len(h):]
+        return None
+    for proc in program.procedures.values():
+        for i in _instrs(proc):
+            if isinstance(i, Call) and i.canonical is not None and i.canonical.startswith(".") \
+                    and getattr(i, "canonical_by_origin", None) == i.canonical:
+                new = renamed(str(i.canonical))
+                if new:
+                    _set(i, new)
+                    i.pack_spec = None
+    for held in (getattr(program, "value_origins", None) or {}).values():
+        for name, value in list(held.items()):
+            new = renamed(str(value)) if str(value).startswith(".") else None
+            if new:
+                held[name] = new
 
 
 def _declared_returns(program) -> Dict[str, str]:

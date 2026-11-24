@@ -495,6 +495,13 @@ class Procedure:
     # Declared type of each parameter as written (`Request`, `HttpServletRequest`),
     # for the languages whose syntax declares one.
     param_types: Dict[str, str] = field(default_factory=dict)
+    # The type arguments of a parameter's declared type, as written (C#: `EntityTypeBuilder<Coupon>
+    # builder` -> {"builder": ["Coupon"]}); param_types drops them.
+    param_type_args: Dict[str, List[str]] = field(default_factory=dict)
+    # TypeScript: the type a local is declared or cast with (`const m: EntityManager = ...`, `const
+    # m = ctx.manager as SqlEntityManager`), without type arguments; a local declared with two
+    # different types is left out.
+    local_types: Dict[str, str] = field(default_factory=dict)
     # Declared return type as written (TypeScript `): Repository<E>`, an async function's
     # `Promise<T>` read as T), without type arguments; "" when none is declared.
     return_type: str = ""

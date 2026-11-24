@@ -41,6 +41,13 @@ registered_via = ["fastify.register"]
 position = 0
 origin = "fastify"
 
+# fastify-plugin: `fp((instance, opts, done) => ...)` wraps a plugin, which Fastify then calls
+# with its instance (https://github.com/fastify/fastify-plugin).
+[[callback_param]]
+registered_via = ["fastify-plugin", "fastify-plugin.default", "fastify-plugin.fastifyPlugin"]
+position = 0
+origin = "fastify"
+
 # handler(request, reply) / errorHandler(error, request, reply): the reply
 # (https://fastify.dev/docs/latest/Reference/Reply/).
 [[entrypoint]]

@@ -469,22 +469,36 @@ def test_unrelated_files_are_not_pulled_into_a_narrow_scan(clean_repo, capsys):
     assert doc["scope"]["files"] == 2          # views + db, not island/other
 
 
-def test_a_full_scan_over_the_limit_analyses_files_alone_with_a_warning(clean_repo, capsys):
+def test_a_full_scan_over_the_limit_splits_files_that_import_each_other_with_a_warning(clean_repo, capsys):
+    # two files that import each other are one component; a limit of 1 cuts it in two
     (clean_repo / "views.py").write_text(
         views("from db import run_query", 'run_query(request.args.get("n"))'))
     rc, doc, err = run_scan(capsys, "--cross-file-limit", "1", "--fail-on", "none")
     assert new_cwes(doc) == set()
-    assert doc["scope"]["cross_file"] is False and "exceed the cross-file limit" in err
+    assert doc["scope"]["groups"] >= 2 and "exceed the cross-file limit" in err
+    assert "imports between groups do not resolve" in err
+
+
+def test_over_the_limit_files_that_import_each_other_stay_in_one_group(clean_repo, capsys):
+    # the handler and its helper form one component within the limit, the other files another:
+    # the flow between them is found as a full scan finds it
+    (clean_repo / "views.py").write_text(
+        views("from db import run_query", 'run_query(request.args.get("n"))'))
+    write(clean_repo, {"island.py": "x = 1\n", "other.py": "import island\n"})
+    rc, doc, err = run_scan(capsys, "--cross-file-limit", "2", "--fail-on", "none")
+    assert ("db.py", "CWE-89") in new_cwes(doc)
+    assert doc["scope"]["cross_file"] is True and doc["scope"]["groups"] == 2
+    assert "4 python files exceed the cross-file limit (2)" in err
 
 
 def test_the_limit_is_per_language_family(clean_repo, capsys):
-    # a Python import never names a JS file, so JS files over the limit leave Python cross-file
+    # a Python import never names a JS file, so JS files over the limit leave Python in one analysis
     (clean_repo / "views.py").write_text(
         views("from db import run_query", 'run_query(request.args.get("n"))'))
     write(clean_repo, {f"web/w{i}.js": f"export const w{i} = {i};\n" for i in range(3)})
     rc, doc, err = run_scan(capsys, "--cross-file-limit", "2", "--fail-on", "none")
     assert ("db.py", "CWE-89") in new_cwes(doc)
-    assert doc["scope"]["cross_file"] is True and doc["scope"]["files"] == 2
+    assert doc["scope"]["cross_file"] is True and doc["scope"]["files"] == 5
     assert "3 javascript files exceed the cross-file limit (2)" in err
 
 

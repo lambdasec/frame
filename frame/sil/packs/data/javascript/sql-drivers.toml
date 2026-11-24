@@ -104,3 +104,11 @@ call = ["pg-promise().query", "pg-promise().any", "pg-promise().one", "pg-promis
 args = [0]
 kind = "sql"
 description = "pg-promise query"
+
+# knex row locks: `.forUpdate()` / `.forNoKeyUpdate()` on a query builder makes its SELECT lock the
+# rows it returns until the transaction ends (`knex("promotion").whereIn("id", ids).forUpdate()`).
+# For the read-then-write check only. https://knexjs.org/guide/query-builder.html#forupdate
+[[concurrency]]
+call = ["knex().forUpdate", "knex().**.forUpdate", "knex.**.forUpdate",
+        "knex().forNoKeyUpdate", "knex().**.forNoKeyUpdate", "knex.**.forNoKeyUpdate"]
+kind = "lock"

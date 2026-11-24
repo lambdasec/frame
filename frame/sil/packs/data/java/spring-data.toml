@@ -44,5 +44,45 @@ call = ["org.springframework.data.repository.*Repository.find*", "org.springfram
         "org.springframework.data.repository.*Repository.count*", "org.springframework.data.repository.*Repository.exists*",
         "org.springframework.data.jpa.repository.JpaRepository.find*", "org.springframework.data.jpa.repository.JpaRepository.get*",
         "org.springframework.data.mongodb.repository.*Repository.find*",
-        "org.springframework.data.repository.reactive.*Repository.find*"]
+        "org.springframework.data.mongodb.repository.*Repository.count*",
+        "org.springframework.data.mongodb.repository.*Repository.exists*",
+        "org.springframework.data.repository.reactive.*Repository.find*",
+        "org.springframework.data.repository.reactive.*Repository.count*",
+        "org.springframework.data.repository.reactive.*Repository.exists*"]
 kind = "read"
+
+# MongoDB's template API (`MongoTemplate` / `ReactiveMongoTemplate` and the operations interfaces
+# they implement): queries read stored documents; inserts, saves, updates and removals write them.
+# For the read-then-write check only (never taint sinks).
+# https://docs.spring.io/spring-data/mongodb/reference/mongodb/template-api.html
+[[concurrency]]
+call = ["org.springframework.data.mongodb.core.*MongoOperations.find*", "org.springframework.data.mongodb.core.*MongoTemplate.find*",
+        "org.springframework.data.mongodb.core.*MongoOperations.count", "org.springframework.data.mongodb.core.*MongoTemplate.count",
+        "org.springframework.data.mongodb.core.*MongoOperations.exists", "org.springframework.data.mongodb.core.*MongoTemplate.exists",
+        "org.springframework.data.mongodb.core.*MongoOperations.query", "org.springframework.data.mongodb.core.*MongoTemplate.query",
+        "org.springframework.data.mongodb.core.*MongoOperations.aggregate", "org.springframework.data.mongodb.core.*MongoTemplate.aggregate"]
+kind = "read"
+
+[[concurrency]]
+call = ["org.springframework.data.mongodb.core.*MongoOperations.insert*", "org.springframework.data.mongodb.core.*MongoTemplate.insert*",
+        "org.springframework.data.mongodb.core.*MongoOperations.save", "org.springframework.data.mongodb.core.*MongoTemplate.save",
+        "org.springframework.data.mongodb.core.*MongoOperations.update*", "org.springframework.data.mongodb.core.*MongoTemplate.update*",
+        "org.springframework.data.mongodb.core.*MongoOperations.upsert", "org.springframework.data.mongodb.core.*MongoTemplate.upsert",
+        "org.springframework.data.mongodb.core.*MongoOperations.remove", "org.springframework.data.mongodb.core.*MongoTemplate.remove",
+        "org.springframework.data.mongodb.core.*MongoOperations.findAndRemove", "org.springframework.data.mongodb.core.*MongoTemplate.findAndRemove",
+        "org.springframework.data.mongodb.core.*MongoOperations.findAndReplace", "org.springframework.data.mongodb.core.*MongoTemplate.findAndReplace"]
+kind = "write"
+
+# `findAndModify(query, update, ...)`, `upsert(query, update, ...)`, `updateFirst` / `updateMulti`:
+# the first argument selects the documents and the second changes them; a field both name is
+# re-checked by the database (`Criteria.where("_id").is(K)` with `setOnInsert("_id", K)`: only one
+# request inserts the key, a claim).
+# https://docs.spring.io/spring-data/mongodb/reference/mongodb/template-crud-operations.html
+[[concurrency]]
+call = ["org.springframework.data.mongodb.core.*MongoOperations.findAndModify", "org.springframework.data.mongodb.core.*MongoTemplate.findAndModify",
+        "org.springframework.data.mongodb.core.*MongoOperations.upsert", "org.springframework.data.mongodb.core.*MongoTemplate.upsert",
+        "org.springframework.data.mongodb.core.*MongoOperations.updateFirst", "org.springframework.data.mongodb.core.*MongoTemplate.updateFirst",
+        "org.springframework.data.mongodb.core.*MongoOperations.updateMulti", "org.springframework.data.mongodb.core.*MongoTemplate.updateMulti"]
+kind = "write"
+filter = ["0"]
+update = ["1"]

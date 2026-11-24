@@ -1,0 +1,23 @@
+[pack]
+name = "medusa"
+language = "javascript"
+description = "Medusa module services: the reads and writes of the read-then-write check"
+
+# A Medusa module reads and writes its entities through internal services built by the service
+# factory and typed `ModulesSdkTypes.IMedusaInternalService<Entity>` (the container injects them;
+# a module service keeps them in fields such as `promotionService_`). `list` / `listAndCount` /
+# `retrieve` read rows; `create` / `update` / `upsert` / `delete` / `softDelete` / `restore` write
+# them. For the read-then-write check only: never taint sinks.
+# https://docs.medusajs.com/learn/fundamentals/modules/service-factory
+# https://github.com/medusajs/medusa/blob/develop/packages/core/types/src/modules-sdk/medusa-internal-service.ts
+[[concurrency]]
+call = ["@medusajs/*.IMedusaInternalService.list", "@medusajs/*.IMedusaInternalService.listAndCount",
+        "@medusajs/*.IMedusaInternalService.retrieve"]
+kind = "read"
+
+[[concurrency]]
+call = ["@medusajs/*.IMedusaInternalService.create", "@medusajs/*.IMedusaInternalService.update",
+        "@medusajs/*.IMedusaInternalService.upsert", "@medusajs/*.IMedusaInternalService.upsertWithReplace",
+        "@medusajs/*.IMedusaInternalService.delete", "@medusajs/*.IMedusaInternalService.softDelete",
+        "@medusajs/*.IMedusaInternalService.restore"]
+kind = "write"

@@ -56,3 +56,19 @@ call = ["mongoose.Model.updateOne", "mongoose.Model.updateMany", "mongoose.Model
 kind = "write"
 filter = ["0"]
 update = ["1"]
+
+# A document's save() writes it back (`doc = await Model.findOne(...)`: the query resolves to a
+# document; `new Model(data).save()`); create / insertMany add documents. For the read-then-write
+# check only. https://mongoosejs.com/docs/api/document.html#Document.prototype.save()
+[[concurrency]]
+call = ["mongoose.Query.save", "mongoose.Document.save", "mongoose.Model.save", "mongoose.Model.create",
+        "mongoose.Model.insertMany", "mongoose.Model.bulkSave"]
+kind = "write"
+
+# `optimisticConcurrency: true` on a schema makes save() check the document's version key: a save
+# after another request changed the document since it was read fails with a VersionError, an
+# optimistic lock on the model's documents. https://mongoosejs.com/docs/guide.html#optimisticConcurrency
+[[concurrency]]
+call = ["mongoose.Schema"]
+keys = ["optimisticConcurrency"]
+kind = "version"

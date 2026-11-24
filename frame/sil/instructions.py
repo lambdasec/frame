@@ -619,6 +619,9 @@ class Call(Instr):
     # For an entry whose value is not an object: the names its value reads, by key path
     # (`0.nbAccess` -> ["links.nbAccess"] for `set({ nbAccess: sql`${links.nbAccess} + 1` })`).
     literal_reads: Optional[Dict[str, List[str]]] = None
+    # For an entry whose value is a literal: its text, by key path (`1.optimisticConcurrency` ->
+    # "true", `0.lock` -> "false"), so an option switched off is not read as switched on.
+    literal_values: Optional[Dict[str, str]] = None
     # A ProcSpec a framework pack resolved for THIS call (canonical id, then
     # name), already merged over the built-in spec; Program.spec_for_call
     # returns it before any name lookup. See frame/sil/packs.

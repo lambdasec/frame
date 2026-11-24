@@ -74,9 +74,16 @@ call = ["sqlalchemy.orm.Session.get", "sqlalchemy.orm.Session.scalar", "sqlalche
 kind = "read"
 
 [[concurrency]]
-call = ["sqlalchemy.orm.Session.commit", "sqlalchemy.orm.Session.flush",
-        "sqlalchemy.orm.Session.query.**.update", "sqlalchemy.orm.Session.query.**.delete"]
+call = ["sqlalchemy.orm.Session.query.**.update", "sqlalchemy.orm.Session.query.**.delete"]
 kind = "write"
+
+# The unit of work: commit / flush write every change the session tracks on the objects it
+# loaded, so an attribute assigned on one (`w.balance -= amt`) is written there.
+# https://docs.sqlalchemy.org/en/20/orm/session_basics.html#flushing
+[[concurrency]]
+call = ["sqlalchemy.orm.Session.commit", "sqlalchemy.orm.Session.flush"]
+kind = "write"
+tracked = true
 
 # `update(T).where(T.n < max).values(n=...)`: a where on a column the values set is a
 # compare-and-set.

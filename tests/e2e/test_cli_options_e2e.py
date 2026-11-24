@@ -234,7 +234,7 @@ def test_cross_file_limit_below_the_file_count_warns_and_falls_back(tmp_path):
 def test_cross_file_limit_is_recorded_in_the_scope(tmp_path):
     write_tree(tmp_path, CROSS_FILE)
     scope = docs(run_scan(tmp_path, "--cross-file-limit", "1"))["scope"]
-    assert scope["cross_file"] is False and "limit (1)" in scope["reason"]
+    assert scope["groups"] >= 2 and "limit (1)" in scope["partitioned"]
 
 
 def test_cross_file_limit_at_the_file_count_keeps_the_analysis(tmp_path):

@@ -1199,7 +1199,7 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
     for i, t in enumerate(data.get("concurrency", [])):
         where = f"[[concurrency]] #{i + 1}"
         _check_keys(origin, where, t, {"call", "kind", "keys", "self_reference", "filter", "update",
-                                       "statement", "description", "references"})
+                                       "statement", "tracked", "description", "references"})
         calls = _strings(origin, f"{where}.call", t.get("call", []), allow_empty=False)
         kind = t.get("kind")
         if kind not in ("lock", "atomic", "version", "read", "write"):
@@ -1233,6 +1233,13 @@ def parse_pack(data: Dict[str, Any], origin: str = "builtin") -> Pack:
             entry["statement"] = True
         if bool(entry.get("filter")) != bool(entry.get("update")):
             raise _fail(origin, where, "filter and update go together")
+        # `tracked`: a `write` that saves the changes the session tracks on the entities it loaded
+        # (EF Core's `SaveChanges()`, a unit of work's `commit` / `flush`): a field assigned on such
+        # an entity before it is a write at the assignment
+        if t.get("tracked", False) is not False:
+            if t["tracked"] is not True or kind != "write":
+                raise _fail(origin, where, "tracked must be true, on a write entry")
+            entry["tracked"] = True
         pack.concurrency.append(entry)
 
     # What limits how often one caller can send a guess (the hunt's `attempt_limit` check,

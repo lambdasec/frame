@@ -345,10 +345,24 @@ def test_sqlalchemy_with_for_update_and_column_expressions(tmp_path):
     """}
     r = _check(tmp_path, files, "spend", 9)
     assert r["verdict"] == "refuted", r
+    # the attribute assigned on the loaded object is the write the commit makes
+    r = _check(tmp_path, files, "spend", 8)
+    assert r["verdict"] == "refuted" and [w["line"] for w in r["witness"]] == [7, 8], r
+    assert _check(tmp_path, files, "spend_locked", 14)["verdict"] == "proved"
     assert _check(tmp_path, files, "spend_locked", 15)["verdict"] == "proved"
     assert _check(tmp_path, files, "spend_in_sql", 20)["verdict"] == "proved"
     r = _check(tmp_path, files, "spend_value", 26)
     assert r["verdict"] != "proved", r
+
+
+def test_tracked_saves_are_validated():
+    head = {"pack": {"name": "x", "language": "csharp"}}
+    pack = parse_pack({**head, "concurrency": [{"call": ["a.SaveChanges"], "kind": "write", "tracked": True}]})
+    assert pack.concurrency == [{"call": ["a.SaveChanges"], "kind": "write", "tracked": True}]
+    for bad in ({"call": ["a.Find"], "kind": "read", "tracked": True},
+                {"call": ["a.SaveChanges"], "kind": "write", "tracked": "yes"}):
+        with pytest.raises(PackError):
+            parse_pack({**head, "concurrency": [bad]})
 
 
 def test_concurrency_keys_and_write_entries_are_validated():
@@ -574,6 +588,17 @@ def test_sql_claims_and_selects(tmp_path):
                                                           "columns": set()}
     r = _check(tmp_path, SQL_STOCK, "take", 8)              # the SELECT line is not a write
     assert "no write" in r["reason"], r
+
+
+def test_sql_session_settings_and_explicit_locks():
+    from frame.sil.concurrency import sql_effect
+    for setting in ("SET LOCAL lock_timeout = '3s'", "BEGIN", "COMMIT", "SAVEPOINT a"):
+        assert sql_effect(setting)["read"] is False and sql_effect(setting)["write"] is False, setting
+    assert sql_effect("LOCK TABLE coupons IN EXCLUSIVE MODE")["guarantee"] == "lock"
+    assert sql_effect("SELECT pg_advisory_xact_lock(hashtext(?))")["guarantee"] == "lock"
+    assert sql_effect("SELECT GET_LOCK('signup', 10)")["guarantee"] == "lock"
+    # a try-lock that may fail decides nothing by itself
+    assert sql_effect("SELECT pg_try_advisory_lock(42)")["guarantee"] is None
 
 
 def _check_lang(tmp_path, files, language, name, line):

@@ -615,6 +615,106 @@ DEFAULT_EXCLUDED_SCAN_DIRS: FrozenSet[Union[str, Tuple[str, ...]]] = frozenset({
 # keeps the files nearest the change.
 DEFAULT_CROSS_FILE_LIMIT = 2000
 
+_MANIFESTS = ("package.json", "pom.xml", "build.gradle", "build.gradle.kts", "pyproject.toml",
+              "setup.py", "setup.cfg", "go.mod", "Cargo.toml")
+
+
+def _partition(index: Any, over: Dict[str, int], limit: int) -> List[List[str]]:
+    """The cross-file analyses of a directory scan whose language families exceed `limit`: the
+    families within it as one group (first), then each family over it split into groups of at
+    most `limit` files. Files that import one another (a connected component of the import
+    graph) stay together; a component over the limit is split along its packages (the nearest
+    directory holding a manifest: package.json, pom.xml, a .csproj, pyproject.toml...), and a
+    package over the limit into runs of files in path order. Groups are filled first-fit,
+    largest first, so a group's analysis is exactly a full one for every component it holds."""
+    from frame.sil.project import language_family
+    by_family: Dict[str, List[str]] = {}
+    for key, mod in index.modules.items():
+        by_family.setdefault(language_family(mod.path) or "", []).append(key)
+    groups: List[List[str]] = [sorted(k for f, ks in by_family.items() if f not in over for k in ks)]
+    manifests: Dict[Path, bool] = {}
+
+    def package_of(path: Path) -> Path:
+        for d in path.parents:
+            if d not in manifests:
+                manifests[d] = any((d / m).is_file() for m in _MANIFESTS) or any(d.glob("*.csproj"))
+            if manifests[d] or d == index.root:
+                return d
+        return index.root
+
+    for family in sorted(over):
+        keys = set(by_family.get(family, ()))
+        seen: set = set()
+        pieces: List[List[str]] = []
+        for start in sorted(keys):
+            if start in seen:
+                continue
+            component, todo = [], [start]
+            seen.add(start)
+            while todo:
+                k = todo.pop()
+                component.append(k)
+                for m in index.imports_of(k) | index.importers_of(k):
+                    if m in keys and m not in seen:
+                        seen.add(m)
+                        todo.append(m)
+            if len(component) <= limit:
+                pieces.append(sorted(component))
+                continue
+            packages: Dict[Path, List[str]] = {}
+            for k in component:
+                packages.setdefault(package_of(index.modules[k].path), []).append(k)
+            for ks in packages.values():
+                ks.sort(key=lambda k: str(index.modules[k].path))
+                pieces += [ks[i:i + limit] for i in range(0, len(ks), limit)]
+        bins: List[List[str]] = []
+        for piece in sorted(pieces, key=lambda p: (-len(p), p[0])):
+            target = next((b for b in bins if len(b) + len(piece) <= limit), None)
+            if target is None:
+                bins.append(list(piece))
+            else:
+                target.extend(piece)
+        groups += bins
+    return groups
+
+
+class _ProjectGroups:
+    """A directory scan's cross-file analyses when a language family is over the limit: one
+    `ProjectContext` per group, built when the scan reaches the group's first file and dropped
+    when it moves to the next (so memory holds one group's programs, plus any the hunt keeps)."""
+
+    def __init__(self, index: Any, groups: List[List[str]], frontend_for, verbose: bool,
+                 display: Dict[str, str], scope: Dict[str, Any]):
+        self.index, self.groups, self.frontend_for = index, [g for g in groups if g], frontend_for
+        self.verbose, self.display, self.scope = verbose, display, scope
+        self.group_of = {k: i for i, g in enumerate(self.groups) for k in g}
+        self.current: Optional[int] = None
+        self.context: Any = None
+
+    def order(self, candidates: List[Path]) -> List[Path]:
+        def rank(p: Path) -> Tuple[int, int]:
+            key = self.index.key_for(p)
+            return (self.group_of.get(key, len(self.groups)) if key else len(self.groups), 0)
+        return sorted(candidates, key=rank)
+
+    def translator_for(self, path: Path) -> Optional[Any]:
+        key = self.index.key_for(path)
+        g = self.group_of.get(key) if key is not None else None
+        if g is None:
+            return None
+        if g != self.current:
+            from frame.sil.project import ProjectContext
+            if self.context is not None:          # calls resolve only into the group being built
+                for k in self.context.programs:
+                    self.index.set_procedures(k, {})
+            self.context = None
+            self.context = ProjectContext.build(self.index, self.groups[g], self.frontend_for,
+                                                verbose=self.verbose, display=self.display)
+            self.current = g
+            if self.context.ipa.incomplete:
+                self.scope["complete"] = False
+        return self.context.translator_for(path)
+
 _SEVERITY_ORDER = {
     Severity.CRITICAL: 5,
     Severity.HIGH: 4,
@@ -1594,9 +1694,11 @@ class FrameScanner:
                     dir_path, pattern, extensions, excluded_dirs,
                     candidates, only_files is not None, cross_file_limit, project_root)
             self._c_escapers = self._project_c_escapers(candidates)
-            for filepath in candidates:
-                result = self.scan_file(str(filepath))
-                results.append(result)
+            order = self._project.order(candidates) if isinstance(self._project, _ProjectGroups) else candidates
+            by_path: Dict[str, ScanResult] = {}
+            for filepath in order:          # group by group, so each group's analysis is built once
+                by_path[str(filepath)] = self.scan_file(str(filepath))
+            results.extend(by_path[str(f)] for f in candidates)
         finally:
             self.llm_detect = per_file_detect
             self._collecting_hunt_programs = False
@@ -1706,23 +1808,17 @@ class FrameScanner:
             if context_note:
                 self.last_project_scope = {"cross_file": False, "reason": context_note}
             return selected
-        alone_note = None
+        groups_note = None
+        over: Dict[str, int] = {}
         if not narrowed and not widen and len(files) > limit:
             # Imports resolve only within a language family (a Python import never names a
-            # TypeScript file), so the limit is per family: a family within it keeps its
-            # cross-file analysis, one over it is analysed file by file.
+            # TypeScript file), so the limit is per family: a family within it keeps one
+            # cross-file analysis, one over it is analysed in groups of files that import one
+            # another, each within the limit (`_partition`).
             families: Dict[str, List[Path]] = {}
             for p in files:
                 families.setdefault(language_family(p) or "", []).append(p)
             over = {f: len(ps) for f, ps in families.items() if len(ps) > limit}
-            kept = [p for f, ps in families.items() if f not in over for p in ps]
-            alone_note = (", ".join(f"{n} {f} files" for f, n in sorted(over.items()))
-                          + f" exceed the cross-file limit ({limit}); each is analysed alone "
-                          "(--cross-file-limit raises it)")
-            if len(kept) < 2:
-                self.last_project_scope = {"cross_file": False, "reason": alone_note}
-                return selected
-            files = kept
 
         frontends: Dict[str, Any] = {}
 
@@ -1734,6 +1830,22 @@ class FrameScanner:
         index = ProjectIndex(base if widen else target, files,
                              lambda lang: frontend_for(lang).parser)
         original = {p.resolve(): p for p in files}
+        if over:
+            groups = _partition(index, over, limit)
+            groups_note = (", ".join(f"{n} {f} files" for f, n in sorted(over.items()))
+                           + f" exceed the cross-file limit ({limit}); they are analysed in groups of "
+                           f"files that import one another ({len(groups) - 1} groups), and imports "
+                           "between groups do not resolve (--cross-file-limit raises it)")
+            groups = [g for g in groups if g]
+            display = {k: str(original[index.modules[k].path]) for k in index.modules
+                       if index.modules[k].path in original}
+            self.last_project_scope = {
+                "cross_file": True, "files": sum(len(g) for g in groups), "selected": len(selected),
+                "truncated": False, "limit": limit, "complete": True, "groups": len(groups),
+                "partitioned": groups_note}
+            self._project = _ProjectGroups(index, groups, frontend_for, self.verbose, display,
+                                           self.last_project_scope)
+            return selected
         to_scan = selected
         scope_keys = list(index.modules)
         truncated = False
@@ -1759,8 +1871,6 @@ class FrameScanner:
             self.last_project_scope["context_root"] = str(base)
         if context_note:
             self.last_project_scope["context"] = context_note
-        if alone_note:
-            self.last_project_scope["alone"] = alone_note
         return to_scan
 
     @staticmethod

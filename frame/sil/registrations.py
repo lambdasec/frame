@@ -24,7 +24,7 @@ passes, has no origin; a reference the index does not resolve is not a handler."
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -315,13 +315,14 @@ def refresh_registered_via(program) -> None:
 
 
 def _callback_origins(program, target_program, reg: Registration, target_name: str,
-                      callbacks) -> Dict[str, str]:
+                      callbacks, extra: Sequence[str] = ()) -> Dict[str, str]:
     """What the packs' [[callback_param]] entries say the framework hands this registration's
-    handler: parameter -> origin."""
+    handler: parameter -> origin. `extra`: more callees the handler is registered with (through
+    a project function that hands it on, `_forwarded_vias`)."""
     proc = target_program.procedures.get(target_name)
     if proc is None:
         return {}
-    vias = registration_vias(program, reg)
+    vias = registration_vias(program, reg) + [v for v in extra if v]
     out: Dict[str, str] = {}
     for cb in callbacks:
         if cb.event and reg.event not in cb.event:
@@ -361,6 +362,32 @@ def apply_callback_params(program, packs) -> None:
             break
 
 
+def _forwarded_vias(ctx, programs: Dict[str, Any], key: str, reg: Registration, depth: int = 0) -> List[str]:
+    """The callees a handler is registered with through a project function that hands its
+    parameter on (`typedPlugin(async (server) => ...)` with `typedPlugin(plugin)` returning
+    `fastifyPlugin(plugin)` in another file: the handler is registered with `fastify-plugin`).
+    Followed through such functions up to three deep."""
+    if depth > 3 or not reg.callee_text:
+        return []
+    try:
+        where = ctx.resolve_call(key, reg.callee_text)
+    except Exception:
+        where = None
+    if where is None or where[0] not in programs:
+        return []
+    program = programs[where[0]]
+    proc = program.procedures.get(where[1])
+    if proc is None or reg.arg_index >= len(proc.params):
+        return []
+    param = str(proc.params[reg.arg_index][0].name)
+    out: List[str] = []
+    for inner in getattr(program, "registrations", ()) or ():
+        if inner.scope == where[1] and inner.target is None and inner.ref == param:
+            out += registration_vias(program, inner)
+            out += _forwarded_vias(ctx, programs, where[0], inner, depth + 1)
+    return out
+
+
 def _target_of(ctx, index, key: str, programs: Dict[str, Any], reg: Registration) -> Optional[Tuple[str, str]]:
     """The procedure a registration hands over: one of the file's, the default export of a
     required project file, or what the index resolves the written reference to."""
@@ -396,6 +423,7 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
         return callbacks[language]
 
     renamed: Set[str] = set()
+    forwarded: Dict[Tuple[str, int], List[str]] = {}
     for _ in range(16):         # routes mounted from routes from the app; a value handed down a chain of constructors
         found = _parameter_origins(ctx, index, programs)
         for key, program in programs.items():
@@ -405,7 +433,9 @@ def link_project(ctx, index, packs_for: Callable[[str], Any]) -> None:
             for reg in getattr(program, "registrations", ()) or ():
                 where = _target_of(ctx, index, key, programs, reg)
                 if where is not None and where[0] in programs:
-                    params = _callback_origins(program, programs[where[0]], reg, where[1], cbs)
+                    params = _callback_origins(program, programs[where[0]], reg, where[1], cbs,
+                                               forwarded.setdefault((key, id(reg)), _forwarded_vias(
+                                                   ctx, programs, key, reg)))
                     if params:
                         found.setdefault(where, {}).update(params)
         changed = False

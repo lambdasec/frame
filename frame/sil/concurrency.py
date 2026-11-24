@@ -40,7 +40,8 @@ READS = frozenset({"resource_select", "sql", "nosql", "orm", "resource_modify"})
 WRITES = frozenset({"resource_modify", "sql", "nosql", "orm"})
 KINDS = ("lock", "atomic", "version", "read", "write")
 PROTECTIONS = ("lock", "atomic", "version")
-SUMMARY_DEPTH = 3
+SUMMARY_DEPTH = 5
+MAX_CALLS = 600        # calls of one function followed into the project's functions
 STRENGTH = {"plain": 0, "atomic": 1, "conditional": 2}
 _BUILTIN: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -231,7 +232,7 @@ def _kind_of(program, names: List[str], table: List[Dict[str, Any]],
     call's literal keys) holds one of them, one with `self_reference` only when `call` computes
     a column from itself."""
     from frame.sil.packs.apply import _glob
-    held = {c for k in (keys or ()) for c in str(k).split(".")}
+    held = _held_keys(call) if call is not None else {c for k in (keys or ()) for c in str(k).split(".")}
     imports = {k: str(v) for k, v in (getattr(program, "imports", None) or {}).items()}
     qualified = list(names)
     for n in names:                                  # `F("n")` with `from django.db.models import F`
@@ -252,6 +253,9 @@ def _kind_of(program, names: List[str], table: List[Dict[str, Any]],
 
 _FOR_UPDATE = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b|\bWITH\s*\(\s*(?:ROWLOCK\s*,\s*)?UPDLOCK\b",
                          re.IGNORECASE)
+# advisory locks that serialize the transactions taking them: PostgreSQL's
+# pg_advisory_lock / pg_advisory_xact_lock (not the try_ or shared forms), MySQL's GET_LOCK
+_ADVISORY_LOCK = re.compile(r"\b(?:pg_advisory_(?:xact_)?lock|GET_LOCK)\s*\(", re.IGNORECASE)
 _UPSERT_SET = re.compile(r"\bON\s+(?:CONFLICT\b.*?\bDO\s+UPDATE\s+SET|DUPLICATE\s+KEY\s+UPDATE)\s+",
                          re.IGNORECASE | re.DOTALL)
 _IDENT_RE = re.compile(r"[A-Za-z_][\w$]*")
@@ -300,9 +304,14 @@ def sql_effect(sql: str) -> Dict[str, Any]:
         return out
     verb = re.match(r"\s*\(?\s*(\w+)", sql)
     word = verb.group(1).upper() if verb else ""
+    if word in ("SET", "RESET", "BEGIN", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "LOCK"):
+        out.update(write=False, read=False)      # session settings and transaction control
+        if word == "LOCK":                        # `LOCK TABLE t IN EXCLUSIVE MODE`
+            out["guarantee"] = "lock"
+        return out
     if word in ("SELECT", "WITH", "SHOW", "EXPLAIN"):
         out.update(write=False, read=True)
-        if word == "SELECT" and _FOR_UPDATE.search(sql):
+        if word == "SELECT" and (_FOR_UPDATE.search(sql) or _ADVISORY_LOCK.search(sql)):
             out["guarantee"] = "lock"
         return out
     if word in ("UPDATE", "INSERT", "DELETE", "REPLACE", "MERGE", "UPSERT"):
@@ -383,18 +392,71 @@ def _qualified(program, names: List[str]) -> List[str]:
     return out
 
 
+_OFF = frozenset({"false", "null", "undefined", "0"})
+
+
+def _held_keys(call) -> set:
+    """The components of a call's literal key paths (`0.data.uses.increment` -> 0, data, uses,
+    increment), leaving out a key whose literal value switches it off (`{ lock: false }`)."""
+    values = getattr(call, "literal_values", None) or {}
+    return {c for k in (getattr(call, "literal_keys", None) or ())
+            if str(values.get(k, "")).lower() not in _OFF for c in str(k).split(".")}
+
+
+def _typed(program, names: List[str]) -> List[str]:
+    """The ids a call id answers to through the library types its parts return (value-types.toml:
+    `...SqlEntityManager.getTransactionContext().whereIn.forUpdate` is a knex builder's
+    `knex.whereIn.forUpdate`)."""
+    lang = getattr(program, "language", "") or ""
+    out: List[str] = []
+    for n in names:
+        if n.count(".") >= 2:
+            out += [t for t in _typed_ids(n, lang) if t not in names]
+    return out
+
+
+_TYPED: Dict[Tuple[str, str], Tuple[str, ...]] = {}
+
+
+def _typed_ids(name: str, lang: str) -> Tuple[str, ...]:
+    """`value_origins.typed_names`, memoised."""
+    key = (name, lang)
+    if key not in _TYPED:
+        try:
+            from frame.sil.value_origins import typed_names
+            _TYPED[key] = tuple(typed_names(name, lang))
+        except Exception:
+            _TYPED[key] = ()
+        if len(_TYPED) > 200000:
+            _TYPED.clear()
+    return _TYPED[key]
+
+
+_PATTERNS: Dict[Tuple[str, ...], Any] = {}
+
+
+def _pattern(calls: Iterable[str]):
+    """An entry's call globs as one compiled pattern (fnmatch's syntax, as `packs.apply._glob`)."""
+    key = tuple(calls)
+    if key not in _PATTERNS:
+        import fnmatch
+        _PATTERNS[key] = re.compile("|".join(f"(?:{fnmatch.translate(c)})" for c in key) or "(?!)")
+    return _PATTERNS[key]
+
+
 def _matching(program, names: List[str], table, call=None, proc=None) -> List[Dict[str, Any]]:
     """Every entry the call meets (`keys`, `self_reference` checked against it)."""
-    from frame.sil.packs.apply import _glob
     qualified = _qualified(program, [n for n in names if n])
-    held = {c for k in (getattr(call, "literal_keys", None) or ()) for c in str(k).split(".")}
+    qualified += _typed(program, qualified)
+    held = _held_keys(call)
     out = []
     for e in table:
         if e.get("keys") and not (held & set(e["keys"])):
             continue
         if e.get("self_reference") and (call is None or not _self_referencing(call, proc)):
             continue
-        if _glob(e.get("call", []), *qualified):
+        pattern = _pattern(e.get("call", []))
+        if any(pattern.match(n) for n in qualified):
             out.append(e)
     return out
 
@@ -507,17 +569,21 @@ def _call_fields(call) -> set:
     return (out | _string_args(call)) - {""}
 
 
-def _selected_fields(selectors: Iterable[str], call, chain: List[Any]) -> set:
+def _selected_fields(selectors: Iterable[str], call, chain: List[Any], proc=None) -> set:
     """The fields a write states under `selectors`: an argument position (`"1"`: the update
-    document of `update_one(filter, update)`), a key at the top of an object argument
-    (`"where"`, `"data"`), or, with a leading dot, a call of the chain by its method
-    (`".set"`, `".where"`)."""
+    document of `update_one(filter, update)`; a local there is read through the calls that
+    built it, `Update update = new Update().setOnInsert("_id", ID)`), a key at the top of an
+    object argument (`"where"`, `"data"`), or, with a leading dot, a call of the chain by its
+    method (`".set"`, `".where"`)."""
     out: set = set()
+    args = [a[0] if isinstance(a, tuple) else a for a in getattr(call, "args", []) or []]
     for s in selectors:
         if s.startswith("."):
             for link in _links(s[1:], chain):
                 out |= _call_fields(link)
             continue
+        if s.isdigit() and int(s) < len(args) and proc is not None:
+            out |= _built_fields(proc, args[int(s)])
         for path in getattr(call, "literal_keys", None) or []:
             comps = str(path).split(".")
             if comps[0] == s:
@@ -525,6 +591,57 @@ def _selected_fields(selectors: Iterable[str], call, chain: List[Any]) -> set:
             elif len(comps) > 1 and comps[1] == s:
                 out |= set(comps[2:])
     return {f for f in out if f and not f.startswith("$") and not f.isdigit()}
+
+
+def _const_names(exp, depth: int = 0) -> set:
+    """Identifier-like string constants passed to calls written in an expression
+    (`Criteria.where("_id").is(ID)` -> _id)."""
+    out: set = set()
+    if exp is None or depth > 8:
+        return out
+    if type(exp).__name__ == "ExpCall":
+        out |= _string_args(exp)
+        func = getattr(exp, "func", None)
+        if type(func).__name__ == "ExpFieldAccess":
+            out |= _const_names(getattr(func, "base", None), depth + 1)
+        for a in getattr(exp, "args", []) or []:
+            out |= _const_names(a[0] if isinstance(a, tuple) else a, depth + 1)
+    return out
+
+
+def _built_fields(proc, exp) -> set:
+    """The fields a local argument was built with: the string constants of the calls of the
+    statement that defines it, once (`Query q = new Query(Criteria.where("_id").is(K))`), followed
+    through the temporaries of a chain (`new Update().setOnInsert("_id", K).setOnInsert(..)`)."""
+    if type(exp).__name__ != "ExpVar":
+        return set()
+    name = str(exp.var)
+    calls = list(_calls(proc))
+    by_ret = _result_names(proc, calls)
+    assigns = [i for n in (getattr(proc, "nodes", {}) or {}).values() for i in getattr(n, "instrs", []) or []
+               if type(i).__name__ == "Assign" and str(getattr(i, "id", "")) == name]
+    defs = [c for c in calls if _ret_name(c) == name]
+    if len(assigns) + len(defs) > 2:
+        return set()                                   # bound more than once: no single value
+    out: set = set()
+    seeds = defs + [by_ret.get(str(i.exp.var)) for i in assigns if type(i.exp).__name__ == "ExpVar"]
+    for i in assigns:
+        out |= _const_names(i.exp)
+    chains = _chains(calls, proc)
+    todo, seen = [c for c in seeds if c is not None], set()
+    while todo and len(seen) < 64:
+        seed = todo.pop()
+        if id(seed) in seen:
+            continue
+        seen.add(id(seed))
+        for link in chains.get(id(seed), [seed]):
+            out |= _string_args(link)
+            for a in getattr(link, "args", []) or []:
+                a = a[0] if isinstance(a, tuple) else a
+                out |= _const_names(a)
+                if type(a).__name__ == "ExpVar" and _TEMPORARY.match(str(a.var)) and str(a.var) in by_ret:
+                    todo.append(by_ret[str(a.var)])      # `new Query($ch)` with `$ch = where("_id").is(K)`
+    return out
 
 
 def _links(selector: str, chain: List[Any]) -> List[Any]:
@@ -623,15 +740,19 @@ def _nested_entries(program, proc, exp, table) -> List[Dict[str, Any]]:
 
 
 class _Write:
-    __slots__ = ("how", "fields", "what")
+    """A write of stored data: how strong (plain / atomic / conditional), the fields it sets, what
+    it is, and whether it saves the changes the session tracks on entities it loaded (`tracked`:
+    EF Core's `SaveChanges()`, a unit of work's `commit`)."""
+    __slots__ = ("how", "fields", "what", "tracked")
 
-    def __init__(self, how: str, fields: set, what: str):
-        self.how, self.fields, self.what = how, set(fields), what
+    def __init__(self, how: str, fields: set, what: str, tracked: bool = False):
+        self.how, self.fields, self.what, self.tracked = how, set(fields), what, tracked
 
     def merge(self, other: "_Write") -> None:
         if STRENGTH[other.how] > STRENGTH[self.how]:
             self.how, self.what = other.how, other.what
         self.fields |= other.fields
+        self.tracked = self.tracked or other.tracked
 
 
 class _Events:
@@ -644,6 +765,10 @@ class _Events:
         self.locks: Dict[int, str] = {}
         self.atomic_exprs: Dict[int, str] = {}
         self.decides: Dict[int, set] = {}      # line of a call -> fields the callee branches on
+        self.lock_lines: set = set()           # every line of a statement that takes a lock
+        # lambdas / nested functions the function calls, folded in at their own lines: (the call
+        # that runs it, its procedure)
+        self.inlined: List[Tuple[Any, Any]] = []
 
     def write(self, line: int, w: _Write) -> None:
         if line in self.writes:
@@ -652,19 +777,151 @@ class _Events:
             self.writes[line] = w
 
 
-def _statement(program, proc, ins, chain, table, ctx=None) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+def _statement(program, proc, ins, chain, table, ctx=None, file: str = "") \
+        -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], Dict[int, List[str]]]:
     """The entries a call's statement meets (every call of its chain, and calls nested in their
     arguments) and the SQL effect of its own statement text."""
     found = []
     classes = _class_table(ctx, program) if any(
         getattr(c, "canonical", None) is None for c in chain) else {}
+    ids = _link_ids(program, proc, chain, ctx, file) if len(chain) > 1 or classes else {}
     for link in chain:
-        names = _names(link) + _typed_names(program, proc, link, classes)
+        typed = _typed_names(program, proc, link, classes) + ids.get(id(link), [])
+        ids[id(link)] = typed
+        names = _names(link) + typed
         found += [dict(e, _chain=chain, _call=link)
                   for e in _matching(program, names, table, call=link, proc=proc)]
         for a in getattr(link, "args", []) or []:
             found += _nested_entries(program, proc, a[0] if isinstance(a, tuple) else a, table)
-    return found, _sql_of(program, proc, ins)
+    return found, _sql_of(program, proc, ins), ids
+
+
+def _func_text(call) -> str:
+    func = getattr(call, "func", None)
+    return str(getattr(func, "value", func) or "").strip('"')
+
+
+def _receiver_types(program, proc, head: str, classes=None) -> List[str]:
+    """Ids of the declared type of a name the function or its class declares (Java / C#
+    `ModelBuilder modelBuilder`, a field `IRepository<T> _repo`), qualified through the file's
+    imports; [] when undeclared."""
+    written = (getattr(proc, "param_types", None) or {}).get(head) or \
+        (getattr(proc, "var_types", None) or {}).get(head)
+    if not written:
+        return []
+    name = _type_name(written)
+    if not name or name in (getattr(program, "class_info", None) or {}) or name in (classes or {}):
+        return []                                   # a project class: its own calls are resolved
+    return _type_ids(program, name)
+
+
+def _type_ids(program, name: str) -> List[str]:
+    """A type's simple name qualified through the file's imports and usings: the one namespace the
+    curated namespace tables list it under when there is one, else every candidate."""
+    out = [q for q in _qualified(program, [name]) if "." in q and not q.endswith(name + "Attribute")]
+    try:
+        from frame.sil.metadata import _wildcard_types
+        listed = _wildcard_types().get(getattr(program, "language", "") or "", {})
+    except Exception:
+        listed = {}
+    known = [q for q in out if name in listed.get(q.rsplit(".", 1)[0], ())]
+    return known if len(known) == 1 else out
+
+
+def _link_ids(program, proc, chain: List[Any], ctx=None, file: str = "") -> Dict[int, List[str]]:
+    """id(call) -> ids a chained call answers to when the frontend left it unnamed: the id of the
+    value the link it is called on returns, followed by its method (`_repo.Query().Where(..)`
+    with Query returning a `DbSet<T>` member -> `Microsoft.EntityFrameworkCore.DbSet.Where`;
+    `modelBuilder.Entity<P>().Property(..).IsRowVersion()` ->
+    `Microsoft.EntityFrameworkCore.ModelBuilder.Entity.Property.IsRowVersion`). A link's value is
+    its callee id, the declared type of its receiver plus its method, or, for a project
+    function, the type of what it returns."""
+    by_ret = _result_names(proc, chain)
+    texts = {id(c): _strip_arguments(_func_text(c)) for c in chain}
+    classes = _class_table(ctx, program) if ctx is not None else {}
+    produced: Dict[int, List[str]] = {}
+    out: Dict[int, List[str]] = {}
+    for _ in range(len(chain) + 1):
+        changed = False
+        for c in chain:
+            if id(c) in produced:
+                continue
+            canonical = getattr(c, "canonical", None)
+            text = _func_text(c)
+            head = text.split(".", 1)[0]
+            src = by_ret.get(head)
+            prefix = max((o for o in chain if o is not c and texts[id(o)] and
+                          text.startswith(_func_text(o) + "(")),
+                         key=lambda o: len(_func_text(o)), default=None)    # C#: `a.Entity().Property`
+            base = src if src is not None and src is not c else prefix
+            if canonical:
+                produced[id(c)] = [str(canonical)]
+            elif base is not None:
+                if id(base) not in produced:
+                    continue
+                produced[id(c)] = out[id(c)] = [f"{b}.{_method(c)}" for b in produced[id(base)]]
+            else:
+                returned = _project_return(ctx, file, proc, c) if ctx is not None else None
+                typed = _receiver_types(program, proc, head, classes) if "." in text and returned is None else []
+                rest = ".".join(texts[id(c)].split(".")[1:])
+                if typed and rest:
+                    produced[id(c)] = out[id(c)] = [f"{t}.{rest}" for t in typed]
+                else:
+                    produced[id(c)] = returned or []
+            changed = True
+        if not changed:
+            break
+    return out
+
+
+def _project_return(ctx, file: str, proc, call) -> Optional[List[str]]:
+    """Ids of what a project function a call resolves to returns, when every return agrees (None
+    when the call is not one of the project's functions):
+    a member of its class whose declared type is a library type (`return DbSet;` with `DbSet<T>
+    DbSet`), or the result of a library call (`return template.find(q)`). Memoised."""
+    try:
+        d = ctx.resolve_call(file, proc.name, call.get_func_name())
+    except Exception:
+        d = None
+    if d is None:
+        return None
+    memo = ctx.__dict__.setdefault("_race_returns", {})
+    key = (d["file"], d["name"])
+    if key in memo:
+        return memo[key]
+    memo[key] = []
+    loc = ctx.locate(d["name"], d["file"] or None)
+    prog = loc.get("program") if loc else None
+    callee = (getattr(prog, "procedures", {}) or {}).get(loc["proc"]) if prog is not None else None
+    if callee is None:
+        return []
+    classes = _class_table(ctx, prog)
+    cls = callee.name.split("#", 1)[0].replace("::", ".").rsplit(".", 1)[0].rsplit(".", 1)[-1] \
+        if "." in callee.name else ""
+    own = classes.get(cls, (None, None))[1]
+    results = {_ret_name(c): c for c in _calls(callee) if _ret_name(c)}
+    copies = {str(i.id): str(i.exp.var) for n in (getattr(callee, "nodes", {}) or {}).values()
+              for i in getattr(n, "instrs", []) or []
+              if type(i).__name__ == "Assign" and type(getattr(i, "exp", None)).__name__ == "ExpVar"}
+    found = set()
+    for node in (getattr(callee, "nodes", {}) or {}).values():
+        for ins in getattr(node, "instrs", []) or []:
+            if type(ins).__name__ != "Return" or getattr(ins, "value", None) is None:
+                continue
+            names = list(_value_names(ins.value))
+            name = names[0] if len(names) == 1 and type(ins.value).__name__ in ("ExpVar", "ExpFieldAccess") else ""
+            name = name[5:] if name.startswith("this.") else name
+            for _ in range(3):
+                name = copies.get(name, name) if name not in results else name
+            if name in results and getattr(results[name], "canonical", None):
+                found.add((str(results[name].canonical),))
+            elif own is not None and name in (getattr(own, "field_types", None) or {}):
+                found.add(tuple(_type_ids(prog, _type_name(own.field_types[name]))))
+            else:
+                found.add(())
+    out = list(next(iter(found))) if len(found) == 1 else []
+    memo[key] = out
+    return out
 
 
 # -- version columns: an optimistic lock on the entity a write saves ----------------------------
@@ -693,9 +950,12 @@ def _type_args(text: str) -> List[str]:
     return [_type_name(t) for t in inner.split(",") if t.strip()]
 
 
-def _versioned(classes, name: str) -> bool:
+def _versioned(classes, name: str, configured: Optional[set] = None) -> bool:
     """Does class `name` carry a field with a version annotation of the packs (`@Version`,
-    `[ConcurrencyCheck]`, `[Timestamp]`)?"""
+    `[ConcurrencyCheck]`, `[Timestamp]`), or a version property the project configures in code
+    (`configured`: EF Core's `Property(p => p.Version).IsRowVersion()`)?"""
+    if configured and name in configured:
+        return True
     held = classes.get(name)
     if held is None:
         return False
@@ -776,7 +1036,7 @@ def _read_entities(proc, classes) -> set:
     return out
 
 
-def _version_protected(proc, chain, classes) -> Optional[set]:
+def _version_protected(proc, chain, classes, configured: Optional[set] = None) -> Optional[set]:
     """The entities a write saves, when every one carries a version field: the class-typed
     arguments of its calls (`repo.save(coupon)`), else, for a call that saves the tracked
     entities (`SaveChanges()`), the entities the function read. None when not protected."""
@@ -784,12 +1044,65 @@ def _version_protected(proc, chain, classes) -> Optional[set]:
     saved = {_type_name(t) for t in saved}
     if not saved and not any(getattr(c, "args", None) for c in chain):
         saved = _read_entities(proc, classes)
-    if saved and all(_versioned(classes, s) for s in saved):
+    if saved and all(_versioned(classes, s, configured) for s in saved):
         return saved
     return None
 
 
-def _direct_events(program, proc, table, ctx=None) -> Tuple[_Events, Dict[int, Any]]:
+def _handed_type_arg(program, proc) -> str:
+    """The first type argument of the call that hands this lambda over (`modelBuilder.Entity<P>(b
+    => ...)` for the lambda's body), "" when none."""
+    parent = (getattr(program, "procedures", {}) or {}).get(getattr(proc, "parent", None) or "")
+    if parent is None:
+        return ""
+    for reg in getattr(program, "registrations", ()) or ():
+        if reg.target != proc.name:
+            continue
+        for c in _calls(parent):
+            if c.get_func_name() == reg.callee_text and (not reg.line or _line(c) == reg.line) \
+                    and getattr(c, "type_args", None):
+                return str(c.type_args[0])
+    return ""
+
+
+def _configured_versions(ctx, program) -> set:
+    """Entity classes the project gives a version property in code: a chain whose last call is a
+    `version` entry (`modelBuilder.Entity<Product>().Property(p => p.Version).IsRowVersion()`,
+    `builder.Property(c => c.Rev).IsConcurrencyToken()` in `Configure(EntityTypeBuilder<Coupon>
+    builder)`), the entity named by the chain's type argument or its receiver's. Memoised."""
+    memo = ctx.__dict__.get("_race_configured") if ctx is not None else None
+    if memo is not None:
+        return memo
+    out: set = set()
+    for prog in (list(getattr(ctx, "programs", []) or []) if ctx is not None else [program]):
+        table = [e for e in entries(prog) if e["kind"] == "version"]
+        if not table:
+            continue
+        methods = {c.rsplit(".", 1)[-1] for e in table for c in e.get("call", [])}
+        for proc in (getattr(prog, "procedures", {}) or {}).values():
+            calls = list(_calls(proc))
+            if not any(_method(c) in methods for c in calls):
+                continue
+            chains = _chains(calls, proc)
+            for c in calls:
+                chain = chains.get(id(c), [c])
+                ids = _link_ids(prog, proc, chain)
+                if not any(_matching(prog, _names(link) + ids.get(id(link), []), table) for link in chain):
+                    continue
+                entity = next((str(t) for link in chain for t in (getattr(link, "type_args", None) or [])[:1]), "")
+                if not entity:
+                    head = _func_text(chain[0]).split(".", 1)[0]
+                    entity = next(iter((getattr(proc, "param_type_args", None) or {}).get(head) or []), "")
+                if not entity:
+                    entity = _handed_type_arg(prog, proc)
+                if entity:
+                    out.add(_type_name(entity))
+    if ctx is not None:
+        ctx.__dict__["_race_configured"] = out
+    return out
+
+
+def _direct_events(program, proc, table, ctx=None, file: str = "") -> Tuple[_Events, Dict[int, Any]]:
     """The function's own events (no callee followed), and the call each written line holds
     (for a decision's read value)."""
     ev = _Events()
@@ -810,7 +1123,7 @@ def _direct_events(program, proc, table, ctx=None) -> Tuple[_Events, Dict[int, A
         if key in seen_chains:
             continue
         seen_chains.add(key)
-        found, _ = _statement(program, proc, ins, chain, table, ctx)
+        found, _, ids = _statement(program, proc, ins, chain, table, ctx, file)
         kinds = {e["kind"] for e in found}
         lines = sorted({_line(c) for c in chain if _line(c)}) or [ln]
         sqls = [x for x in (_sql_of(program, proc, c) for c in chain) if x]
@@ -821,9 +1134,11 @@ def _direct_events(program, proc, table, ctx=None) -> Tuple[_Events, Dict[int, A
                 sqls.append(sql_effect(_sql_text(proc, first)))
         if kinds & {"lock", "version"} or any(x["guarantee"] == "lock" for x in sqls):
             ev.locks.setdefault(lines[0], _names(ins)[-1] if _names(ins) else "a lock")
+            ev.lock_lines.update(lines)
         tail = _tail(chain, proc)
         if "read" in kinds or any(x in ev.reads for x in lines):
-            label = _names(tail)[0] if _names(tail) else "a read"      # its callee id when known
+            label = (([str(tail.canonical)] if getattr(tail, "canonical", None) else []) +
+                     ids.get(id(tail), [])[:1] + _names(tail) + ["a read"])[0]   # its callee id when known
             for x in lines:
                 ev.reads[x] = label
                 at[x] = tail                          # the value read is the chain's result
@@ -847,7 +1162,7 @@ def _direct_events(program, proc, table, ctx=None) -> Tuple[_Events, Dict[int, A
             sel_chain = e.get("_chain") or chain
             call = e.get("_call") or ins
             if e.get("update"):
-                fields |= _selected_fields(e["update"], call, sel_chain)
+                fields |= _selected_fields(e["update"], call, sel_chain, proc)
             if e["kind"] == "atomic":
                 fields |= {str(k).split("__", 1)[0] for k in (getattr(call, "kwarg_names", None) or []) if k}
                 fields |= _string_args(call)
@@ -861,16 +1176,18 @@ def _direct_events(program, proc, table, ctx=None) -> Tuple[_Events, Dict[int, A
                     how = "atomic"
                     fields |= {c for c, _ in pairs}
             if e.get("filter") and e.get("update"):
-                if _selected_fields(e["filter"], call, sel_chain) & _selected_fields(e["update"], call, sel_chain):
+                if _selected_fields(e["filter"], call, sel_chain, proc) & _selected_fields(e["update"], call, sel_chain, proc):
                     how = "conditional"
-        w = _Write(how, fields, _names(ins)[-1] if _names(ins) else "a write")
+        w = _Write(how, fields, _names(ins)[-1] if _names(ins) else "a write",
+                   tracked=any(e.get("tracked") for e in found if e["kind"] == "write"))
         if how != "conditional" and any(e["kind"] == "version" for e in table):
-            versioned = _version_protected(proc, chain, _class_table(ctx, program))
+            versioned = _version_protected(proc, chain, _class_table(ctx, program),
+                                           _configured_versions(ctx, program))
             if versioned:
                 w.how = "conditional"
                 w.what = f"{w.what} (optimistic lock: {', '.join(sorted(versioned))} carries a version field)"
         for x in lines:
-            ev.write(x, _Write(w.how, w.fields, w.what))
+            ev.write(x, _Write(w.how, w.fields, w.what, w.tracked))
             at.setdefault(x, ins)
     for node in (getattr(proc, "nodes", {}) or {}).values():         # `c.uses = F("uses") + 1`
         for ins in getattr(node, "instrs", []) or []:
@@ -912,16 +1229,19 @@ def _summary(ctx, file: str, name: str, depth: int) -> Optional[Dict[str, Any]]:
     for ln in sorted(ev.writes):
         w = ev.writes[ln]
         how = "conditional" if first_lock is not None and first_lock <= ln else w.how
-        cur = _Write(how, w.fields, f"{name} ({w.what})")
+        cur = _Write(how, w.fields, f"{name} ({w.what})", w.tracked)
         if write is None or STRENGTH[cur.how] < STRENGTH[write.how]:
             fields = (write.fields if write else set()) | cur.fields
             write = cur
             write.fields = fields
         else:
             write.fields |= cur.fields
+            write.tracked = write.tracked or cur.tracked
     # the fields it (and what it calls) branches on: a value it returns may carry the outcome of
     # such a check (`checkLink` comparing `link.nbAccess` with `link.limitAccess`)
     decides = set(_branch_fields(proc))
+    for _, nested in ev.inlined:
+        decides |= _branch_fields(nested)
     for fields in ev.decides.values():
         decides |= fields
     out = {"reads": bool(ev.reads), "write": write, "lock": bool(ev.locks) and not ev.writes,
@@ -947,8 +1267,10 @@ def events(program, proc, ctx=None, file: str = "", depth: int = 0) -> Tuple[_Ev
     """The function's events, with the project functions it calls folded in at their calls when
     a context resolves them (SUMMARY_DEPTH deep)."""
     table = entries(program)
-    ev, at = _direct_events(program, proc, table, ctx)
+    ev, at = _direct_events(program, proc, table, ctx, file)
     if ctx is None or depth >= SUMMARY_DEPTH or not hasattr(ctx, "graph"):
+        _tracked_changes(proc, ev, at)
+        _versioned_documents(program, proc, ev, at, ctx, file)
         return ev, at
     try:
         _, calls = ctx.graph()
@@ -956,14 +1278,21 @@ def events(program, proc, ctx=None, file: str = "", depth: int = 0) -> Tuple[_Ev
     except Exception:
         listed = []
     by_line: Dict[int, Any] = {}
+    by_callee: Dict[Tuple[str, int], Any] = {}
     for ins in _calls(proc):
         by_line.setdefault(_line(ins), ins)
-    for callee, ln in listed[:80]:
+        by_callee.setdefault((ins.get_func_name(), _line(ins)), ins)
+    for callee, ln in listed[:MAX_CALLS]:
         try:
             d = ctx.resolve_call(file, proc.name, callee)
         except Exception:
             d = None
         if d is None or (d["file"], d["name"]) == (file, proc.name):
+            continue
+        nested = (getattr(program, "procedures", {}) or {}).get(d["name"]) if d["file"] == file else None
+        if nested is not None and getattr(nested, "parent", None) == proc.name \
+                and (callee, ln) in by_callee:
+            _inline(ev, at, events(program, nested, ctx=ctx, file=file, depth=depth), by_callee[(callee, ln)], nested)
             continue
         s = _summary(ctx, d["file"], d["name"], depth + 1)
         if not s:
@@ -973,24 +1302,229 @@ def events(program, proc, ctx=None, file: str = "", depth: int = 0) -> Tuple[_Ev
             if ln in by_line:
                 at.setdefault(ln, by_line[ln])
         if s["write"] is not None:
-            ev.write(ln, _Write(s["write"].how, s["write"].fields, s["write"].what))
+            ev.write(ln, _Write(s["write"].how, s["write"].fields, s["write"].what, s["write"].tracked))
+            if ln in by_line:
+                at.setdefault(ln, by_line[ln])
         if s["lock"]:
             ev.locks.setdefault(ln, s["name"])
+            ev.lock_lines.add(ln)
         if s.get("decides"):
             ev.decides.setdefault(ln, set()).update(s["decides"])
             if ln in by_line:
                 at.setdefault(ln, by_line[ln])
+    _tracked_changes(proc, ev, at)
+    _versioned_documents(program, proc, ev, at, ctx, file)
     return ev, at
+
+
+# -- documents of a versioned model: Mongoose's optimisticConcurrency ---------------------------
+
+def _schema_versioned(program, exp_or_call, table) -> bool:
+    """Does a schema construction (`new mongoose.Schema({...}, { optimisticConcurrency: true })`)
+    meet a `version` entry with `keys`?"""
+    name = _func_text(exp_or_call).removeprefix("new ").strip()
+    return bool(name) and any(e.get("keys") for e in _matching(program, [name], table, call=exp_or_call))
+
+
+def _model_bindings(program, table) -> set:
+    """Names this file binds to a model whose schema is versioned (`module.exports =
+    mongoose.model("Coupon", couponSchema)` -> module.exports; `const Coupon = model(...)`): the
+    schema as a local bound once to such a construction, or written inline, or switched on with
+    `schema.set("optimisticConcurrency", true)`."""
+    schemas: set = set()
+    models: List[Tuple[str, Any]] = []
+    for proc in (getattr(program, "procedures", {}) or {}).values():
+        for node in (getattr(proc, "nodes", {}) or {}).values():
+            for ins in getattr(node, "instrs", []) or []:
+                kind = type(ins).__name__
+                exp = getattr(ins, "exp", None) if kind == "Assign" else None
+                if kind == "Assign" and type(exp).__name__ == "ExpCall" and _schema_versioned(program, exp, table):
+                    schemas.add(str(ins.id))
+                if kind != "Call":
+                    continue
+                args = [a[0] if isinstance(a, tuple) else a for a in getattr(ins, "args", []) or []]
+                text = _func_text(ins)
+                if _schema_versioned(program, ins, table) and _ret_name(ins):
+                    schemas.add(_ret_name(ins))
+                elif text.endswith(".set") and len(args) >= 2 and getattr(args[0], "value", None) in (
+                        "optimisticConcurrency", '"optimisticConcurrency"') and getattr(args[1], "value", None) is True:
+                    schemas.add(text[:-4])
+                if str(getattr(ins, "canonical", "") or "").endswith(".model") and len(args) >= 2:
+                    models.append((_ret_name(ins) or "", args[1]))
+    out = set()
+    copies = {str(i.id): str(i.exp.var) for p in (getattr(program, "procedures", {}) or {}).values()
+              for n in (getattr(p, "nodes", {}) or {}).values() for i in getattr(n, "instrs", []) or []
+              if type(i).__name__ == "Assign" and type(getattr(i, "exp", None)).__name__ == "ExpVar"}
+    for ret, schema in models:
+        versioned = (type(schema).__name__ == "ExpVar" and str(schema.var) in schemas) or \
+            (type(schema).__name__ == "ExpCall" and _schema_versioned(program, schema, table))
+        if versioned and ret:
+            out.add(ret)
+            out |= {dst for dst, src in copies.items() if src == ret}       # `module.exports = $m`
+    return out
+
+
+def _versioned_models(ctx, program) -> Dict[str, set]:
+    """File -> the names it binds to a versioned model (`_model_bindings`). Memoised."""
+    memo = ctx.__dict__.get("_race_models") if ctx is not None else None
+    if memo is not None:
+        return memo
+    from frame.sil.hunt_tools import _program_file
+    root = getattr(ctx, "repo_root", "") if ctx is not None else ""
+    out: Dict[str, set] = {}
+    for prog in (list(getattr(ctx, "programs", []) or []) if ctx is not None else [program]):
+        if (getattr(prog, "language", "") or "") not in ("javascript", "typescript"):
+            continue
+        table = [e for e in entries(prog) if e["kind"] == "version" and e.get("keys")]
+        if table and any(str(getattr(c, "canonical", "") or "").endswith(".model")
+                         for p in (getattr(prog, "procedures", {}) or {}).values() for c in _calls(p)):
+            names = _model_bindings(prog, table)
+            if names:
+                out[_program_file(prog, root) if ctx is not None else ""] = names
+    if ctx is not None:
+        ctx.__dict__["_race_models"] = out
+    return out
+
+
+def _module_file(file: str, spec: str, files) -> Optional[str]:
+    """The project file a relative module specifier names from `file` (`./models/coupon` ->
+    `models/coupon.js`), among `files`."""
+    import posixpath
+    if not spec.startswith("."):
+        return None
+    base = posixpath.normpath(posixpath.join(posixpath.dirname(file), spec))
+    for cand in (base, *(base + e for e in (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx")),
+                 *(base + "/index" + e for e in (".js", ".ts"))):
+        if cand in files:
+            return cand
+    return None
+
+
+def _versioned_documents(program, proc, ev: _Events, at: Dict[int, Any], ctx, file: str) -> None:
+    """A plain write that saves a document read through a versioned model (`doc = await
+    Coupon.findOne(...)`; `doc.save()`, the Coupon schema setting optimisticConcurrency) is checked
+    against the version it read: conditional."""
+    plain = [ln for ln, w in ev.writes.items() if w.how == "plain" and ln > 0]
+    if not plain or (getattr(program, "language", "") or "") not in ("javascript", "typescript"):
+        return
+    models = _versioned_models(ctx, program)
+    if not models:
+        return
+    here = models.get(file, set())
+    instrs = _instrs_in_order(proc, ev)
+    for read in sorted(ln for ln in ev.reads if 0 < ln < max(plain)):
+        call = at.get(read)
+        ret = _ret_name(call) if call is not None else None
+        text = _func_text(call) if call is not None else ""
+        model = text.rpartition(".")[0]
+        versioned = model in here or ("module.exports" in models.get(_module_file(file, model, models) or "", set()))
+        if not ret or not versioned:
+            continue
+        held = {ret}
+        for ins in instrs:
+            ln = _line(ins)
+            if ln < read:
+                continue
+            if type(ins).__name__ == "Assign" and "." not in str(ins.id) and \
+                    _entity_path(getattr(ins, "exp", None), held):
+                held.add(str(ins.id))
+            if type(ins).__name__ == "Call" and ln in plain and _func_text(ins).split(".", 1)[0] in held:
+                w = ev.writes[ln]
+                w.how = "conditional"
+                w.what = f"{w.what} (optimistic lock: the model {model.rsplit('/', 1)[-1]} read at line {read} " \
+                         "sets optimisticConcurrency)"
+
+
+def _inline(ev: _Events, at: Dict[int, Any], inner: Tuple[_Events, Dict[int, Any]], call, nested) -> None:
+    """Fold a lambda's events into its enclosing function's at their own lines (`flatMap(x -> {
+    if (...) ...; return repo.save(u); })` runs where it is written, once its receiver has a
+    value), so a read before it, a branch in it and a write in it are one sequence."""
+    iev, iat = inner
+    for ln, label in iev.reads.items():
+        ev.reads.setdefault(ln, label)
+    for ln, w in iev.writes.items():
+        ev.write(ln, _Write(w.how, w.fields, w.what, w.tracked))
+    for ln, label in iev.locks.items():
+        if ln > 0:
+            ev.locks.setdefault(ln, label)
+    for ln, label in iev.atomic_exprs.items():
+        ev.atomic_exprs.setdefault(ln, label)
+    for ln, fields in iev.decides.items():
+        ev.decides.setdefault(ln, set()).update(fields)
+    ev.lock_lines |= iev.lock_lines
+    for ln, c in iat.items():
+        at.setdefault(ln, c)
+    ev.inlined.append((call, nested))
+    ev.inlined += iev.inlined
+
+
+# frontends lower an element of an iterated collection as a call of one of these on it
+# (C# `foreach`, Python `for`, ...): the element is part of the value iterated
+_ELEMENT_OF = frozenset({"GetEnumerator.Current", "next", "__getitem__", "iter", "Iterator.next"})
+
+
+def _entity_path(exp, held: set) -> bool:
+    """Is `exp` a loaded entity or a part of one: a name holding it, a member path on it
+    (`checkout.CheckoutItems`), an element of it, or an iterated element (`foreach (var i in
+    checkout.Items)`)? Never a value computed from one."""
+    kind = type(exp).__name__
+    if kind == "ExpVar":
+        return str(getattr(exp, "var", "")).split(".", 1)[0] in held
+    if kind == "ExpFieldAccess":
+        return _entity_path(getattr(exp, "base", None), held)
+    if kind == "ExpIndex":
+        return _entity_path(getattr(exp, "base", None), held)
+    if kind == "ExpCall":
+        func = getattr(exp, "func", None)
+        name = str(getattr(func, "value", func) or "").strip('"')
+        args = [a[0] if isinstance(a, tuple) else a for a in getattr(exp, "args", []) or []]
+        return name in _ELEMENT_OF and len(args) == 1 and _entity_path(args[0], held)
+    return False
+
+
+def _tracked_changes(proc, ev: _Events, at: Dict[int, Any]) -> None:
+    """A field assigned on an entity the function loaded (`item.Product.Stock = item.Product.Stock
+    - n` after reading the checkout), followed by a call that saves the changes the session
+    tracks (`SaveChanges()`): the assignment is the write. The entity is followed through names
+    holding it, member paths, elements and iteration, never through values computed from it."""
+    saves = sorted(ln for ln, w in ev.writes.items() if w.tracked and ln > 0)
+    if not saves:
+        return
+    instrs = _instrs_in_order(proc, ev)
+    for read in sorted(ln for ln in ev.reads if 0 < ln < saves[-1]):
+        call = at.get(read)
+        ret = _ret_name(call) if call is not None else None
+        if not ret:
+            continue
+        held = {ret}
+        for ins in instrs:
+            ln = _line(ins)
+            if ln < read or ln >= saves[-1] or type(ins).__name__ != "Assign":
+                continue
+            target = str(getattr(ins, "id", ""))
+            head, dot, field = target.partition(".")
+            if dot and head in held:
+                save = next(x for x in saves if x > ln)
+                sw = ev.writes[save]
+                how = "conditional" if sw.how == "conditional" and "optimistic lock" in sw.what else "plain"
+                what = sw.what if how == "conditional" else \
+                    f"a change to {target} on the entity read at line {read}, saved at line {save} ({sw.what})"
+                if ln not in ev.writes:
+                    ev.writes[ln] = _Write(how, {field.rsplit(".", 1)[-1]}, what)
+            elif not dot and _entity_path(getattr(ins, "exp", None), held):
+                held.add(target)
 
 
 # -- the verdict -------------------------------------------------------------------------------
 
 def _decision(proc, at: Dict[int, Any], read: int, write: int,
-              decides: Optional[Dict[int, set]] = None) -> Optional[Tuple[int, set]]:
+              decides: Optional[Dict[int, set]] = None, prefer: Optional[set] = None,
+              ev: Optional[_Events] = None) -> Optional[Tuple[int, set]]:
     """(line, fields) of the first branch between `read` and `write` on the value the read
     produced (followed through copies and values computed from it), with the attributes of it
     the branch reads (`c.uses < c.limit` -> uses, limit; `left > 0` with `left = c.limit - c.uses`
-    -> limit, uses; `!c` -> none)."""
+    -> limit, uses; `!c` -> none). With `prefer` (the fields the write sets), the first branch on
+    one of those wins over an earlier one on others (`if c is None` before `if c.uses >= c.max`)."""
     call = at.get(read)
     ret = _ret_name(call) if call is not None else None
     if not ret:
@@ -998,6 +1532,7 @@ def _decision(proc, at: Dict[int, Any], read: int, write: int,
     # a value a project function returns carries the fields it decided on (`linkEnv` returning
     # `ok` after `checkLink` compared nbAccess with limitAccess)
     held: Dict[str, set] = {ret: set((decides or {}).get(read, set()))}
+    first: Optional[Tuple[int, set]] = None
 
     def touched(exp) -> Tuple[bool, set]:
         hit, fields = False, set()
@@ -1009,7 +1544,8 @@ def _decision(proc, at: Dict[int, Any], read: int, write: int,
                 if len(parts) > 1:
                     fields.add(parts[-1])
         return hit, fields
-    for ins in _instrs_in_order(proc):
+    params = _lambda_params(ev)
+    for ins in _instrs_in_order(proc, ev):
         ln = _line(ins)
         if ln < read or ln >= write:
             continue
@@ -1019,6 +1555,11 @@ def _decision(proc, at: Dict[int, Any], read: int, write: int,
             if hit:
                 name = str(ins.id).split(".", 1)[0]
                 held[name] = held.get(name, set()) | fields
+        elif kind == "Call" and id(ins) in params:          # a lambda handed the value read
+            for p, a in zip(params[id(ins)], getattr(ins, "args", []) or []):
+                hit, fields = touched(a[0] if isinstance(a, tuple) else a)
+                if hit:
+                    held[p] = held.get(p, set()) | fields
         elif kind == "Call" and _ret_name(ins) and ln > read:
             hit, fields = touched(getattr(ins, "args", None))
             if hit:
@@ -1026,8 +1567,10 @@ def _decision(proc, at: Dict[int, Any], read: int, write: int,
         elif kind == "Prune":
             hit, fields = touched(getattr(ins, "condition", None))
             if hit:
-                return ln, fields
-    return None
+                if not prefer or fields & prefer:
+                    return ln, fields
+                first = first or (ln, fields)
+    return first
 
 
 def _verdict(program, proc, line: int, ctx=None, file: str = "",
@@ -1045,6 +1588,12 @@ def _verdict(program, proc, line: int, ctx=None, file: str = "",
         return {"verdict": "proved", "witness": [],
                 "reason": f"a lock or version check ({ev.locks[locks[0]]}) at line {where} comes before "
                           f"the reads the write at line {line} depends on"}
+    claim = _claim(proc, ev, at, int(line))
+    if claim is not None:
+        return {"verdict": "proved", "witness": [],
+                "reason": f"the write at line {claim[0]} ({ev.writes[claim[0]].what}) claims what it changes "
+                          f"in one step and line {claim[1]} goes on only when it did: one request at a time "
+                          f"reaches the reads and the write at line {line}"}
     if w.how == "conditional":
         if "optimistic lock" in w.what:
             return {"verdict": "proved", "witness": [],
@@ -1058,13 +1607,19 @@ def _verdict(program, proc, line: int, ctx=None, file: str = "",
                 "(it may come from a caller: check the caller)"}
     if locks:
         again = [r for r in reads if r >= locks[0]]
+        reread = _reread_under_lock(proc, ev, at, locks[0], int(line))
+        if reread is not None:
+            return {"verdict": "proved", "witness": [],
+                    "reason": f"the lock at line {locks[0]} comes after the read at line {reads[0]}, but that "
+                              f"read only chooses what to lock: line {reread} reads again under the lock and "
+                              f"the write at line {line} uses only what was read there"}
         return {**unknown, "reason": f"the lock at line {locks[0]} comes after the read at line {reads[0]}"
                 + (f"; line {again[0]} reads again under it, so the write is safe if it uses only what "
                    "was read under the lock" if again else ": a value read before it may be stale; re-read "
                    "under the lock")}
     decided = None
     for r in reads:
-        decided = _decision(proc, at, r, int(line), ev.decides)
+        decided = _decision(proc, at, r, int(line), ev.decides, prefer=w.fields, ev=ev)
         if decided:
             decided = (r,) + decided
             break
@@ -1089,20 +1644,105 @@ def _verdict(program, proc, line: int, ctx=None, file: str = "",
         return {**unknown, "reason": f"an atomic expression at line {earlier_atomic[0]} may compute "
                 f"the value written at line {line}: read it"}
     for cprog, cproc in callers or []:
-        cev, _ = events(cprog, cproc)
-        if cev.locks:
+        for _ in range(8):           # a lambda's call is folded into the function it is written in
+            parent = (getattr(cprog, "procedures", {}) or {}).get(getattr(cproc, "parent", None) or "")
+            if parent is None:
+                break
+            cproc = parent
+        cfile = ""
+        if ctx is not None:
+            from frame.sil.hunt_tools import _program_file
+            cfile = _program_file(cprog, getattr(ctx, "repo_root", ""))
+        cev, cat = events(cprog, cproc, ctx=ctx, file=cfile) if ctx is not None else events(cprog, cproc)
+        if cev.locks or any(_claim(cproc, cev, cat, ln) for ln in cev.writes):
             return {**unknown, "reason": f"{name} reads at line {reads[0]} and writes at line {line} "
-                    f"with no lock, but a caller ({getattr(cproc, 'name', '?')}) takes one"}
+                    f"with no lock, but a caller ({getattr(cproc, 'name', '?')}) takes one or claims first"}
     if not any(e["kind"] in PROTECTIONS for e in entries(program)):
         return {**unknown, "reason": "no [[concurrency]] facts for this language, so the engine "
                 "cannot tell a lock from any other call"}
     witness = [{"line": reads[0], "event": f"reads stored data ({ev.reads[reads[0]]})"}]
     if decided:
-        witness.append({"line": decided[1], "event": "decides on the value read"})
+        on = sorted(decided[2] & w.fields)
+        witness.append({"line": decided[1], "event": "decides on " + ", ".join(on) if on else "decides on the value read"})
     witness.append({"line": int(line), "event": "writes it back, no lock, version or atomic update"})
     return {"verdict": "refuted", "witness": witness,
             "reason": f"{name} reads stored data at line {reads[0]} and writes at line {line}; "
                       "nothing in it or its callers locks the row, checks a version or writes atomically"}
+
+
+def _claim(proc, ev: _Events, at: Dict[int, Any], line: int) -> Optional[Tuple[int, int]]:
+    """(claim line, branch line): a conditional write before `line` and before any read (an
+    insert of a key only one request can make, a compare-and-set: `findAndModify` upserting a
+    fixed id, `INSERT ... ON CONFLICT DO NOTHING`) whose result the code branches on before
+    `line` (`if (!claimed) return error`). Only the request that won it goes on, so what follows
+    runs one request at a time. None when there is none."""
+    reads = [r for r in ev.reads if 0 < r < line]
+    calls = [c for c in _calls(proc) if _ret_name(c)]
+    for c in sorted(ln for ln, w in ev.writes.items() if 0 < ln < line and w.how == "conditional"
+                    and "optimistic lock" not in w.what):
+        if any(r < c for r in reads):
+            continue
+        for made in [at[c]] * (c in at) + [k for k in calls if _line(k) == c]:   # the call whose result says
+            decided = _decision(proc, {**at, c: made}, c, line, ev=ev)
+            if decided is not None:
+                return c, decided[0]
+    return None
+
+
+def _read_names(ins) -> set:
+    """Heads of the names an instruction reads: an assignment's value, a call's arguments and
+    receiver, a branch's condition, a returned value."""
+    kind = type(ins).__name__
+    exps: List[Any] = []
+    if kind == "Assign":
+        exps = [getattr(ins, "exp", None)]
+    elif kind == "Call":
+        exps = [a[0] if isinstance(a, tuple) else a for a in getattr(ins, "args", []) or []]
+    elif kind == "Prune":
+        exps = [getattr(ins, "condition", None)]
+    elif kind == "Return":
+        exps = [getattr(ins, "value", None)]
+    out = {str(n).split(".", 1)[0] for e in exps if e is not None for n in _value_names(e)}
+    if kind == "Call":
+        out.add(_func_text(ins).split(".", 1)[0])
+    return out
+
+
+def _reread_under_lock(proc, ev: _Events, at: Dict[int, Any], lock: int, write: int) -> Optional[int]:
+    """The line of a read under the lock when the reads before it only choose what to lock (`ids =
+    rows.map(r => r.id)`; lock those rows; read them again): every value read before the lock,
+    and every value computed from one, is used after the lock only by the locking statement or
+    replaced by a read under it, before the write. None otherwise."""
+    before = [r for r in sorted(ev.reads) if 0 < r < lock]
+    under = [r for r in sorted(ev.reads) if lock <= r < write and r not in ev.lock_lines]
+    if not before or not under:
+        return None
+    stale: set = set()
+    for r in before:
+        call = at.get(r)
+        ret = _ret_name(call) if call is not None else None
+        if not ret:
+            return None                               # a read whose value the engine cannot follow
+        stale.add(ret)
+    reread_rets = {_ret_name(at[r]) for r in under if at.get(r) is not None and _ret_name(at[r])}
+    for ins in _instrs_in_order(proc, ev):
+        ln = _line(ins)
+        if ln < before[0] or ln >= write:
+            continue
+        kind = type(ins).__name__
+        reads = _read_names(ins)
+        target = str(getattr(ins, "id", "")).split(".", 1)[0] if kind == "Assign" else _ret_name(ins) or ""
+        if ln < lock:
+            if reads & stale and target:
+                stale.add(target)                     # computed from a value read before the lock
+            continue
+        if ln in ev.lock_lines:
+            continue
+        if reads & stale:
+            return None                               # a value read before the lock is used after it
+        if target and target in stale and (ln in ev.reads or (kind == "Assign" and target in reread_rets)):
+            stale.discard(target)                     # replaced by a read under the lock
+    return under[0]
 
 
 def check_atomic_write(program, proc_name: str, line: int,
@@ -1122,11 +1762,18 @@ def _heads(names) -> set:
     return {str(n).split(".", 1)[0].split("[", 1)[0] for n in names}
 
 
-def _instrs_in_order(proc) -> List[Any]:
+def _instrs_in_order(proc, ev: Optional[_Events] = None) -> List[Any]:
+    """The function's instructions by line, with those of the lambdas folded into `ev`."""
     out = []
-    for node in (getattr(proc, "nodes", {}) or {}).values():
-        out += list(getattr(node, "instrs", []) or [])
+    for p in [proc] + [n for _, n in (ev.inlined if ev is not None else [])]:
+        for node in (getattr(p, "nodes", {}) or {}).values():
+            out += list(getattr(node, "instrs", []) or [])
     return sorted(out, key=_line)
+
+
+def _lambda_params(ev: Optional[_Events]) -> Dict[int, List[str]]:
+    """id(call) -> the parameter names of the lambda an inlined call runs."""
+    return {id(c): [str(p) for p, _ in (getattr(n, "params", None) or [])] for c, n in (ev.inlined if ev else [])}
 
 
 def _refuted_writes(program, proc_name: str, ctx=None, file: str = "") -> List[Dict[str, Any]]:

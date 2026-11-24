@@ -885,7 +885,12 @@ class CSharpFrontend:
                         parse_annotation(a, self._imports) for a in attrs]
                 tn = prm.child_by_field_name("type")
                 if pn is not None and tn is not None:
-                    proc.param_types[self._get_text(pn)] = self._get_text(tn).split("<")[0].rstrip("?").strip()
+                    written = self._get_text(tn)
+                    proc.param_types[self._get_text(pn)] = written.split("<")[0].rstrip("?").strip()
+                    if "<" in written and written.rstrip("?").endswith(">"):
+                        inner = written.partition("<")[2].rstrip("?")[:-1]
+                        if "<" not in inner:                    # `IRepository<Order>`, not nested generics
+                            proc.param_type_args[self._get_text(pn)] = [t.strip() for t in inner.split(",")]
 
         # Modifiers as written (packs match on them: a public method of a controller is an action)
         proc.modifiers = [self._get_text(c) for c in node.children if c.type == "modifier"]
@@ -4143,6 +4148,10 @@ class CSharpFrontend:
         func = node.child_by_field_name("function")
         if func:
             name = self._strip_generics(self._callee_text(func))
+            if not any(q in name for q in ('"', "'", "//", "/*")):
+                # a chain written over several lines (`_repo\n    .Query()`) is the same name
+                # as on one line; text holding a literal or a comment is left as written
+                name = re.sub(r"\s*\.\s*", ".", name)
             head, dot, rest = name.partition(".")
             if dot and func.type == "member_access_expression" and head in self._PREDEFINED_TYPES:
                 name = f"{self._PREDEFINED_TYPES[head]}.{rest}"

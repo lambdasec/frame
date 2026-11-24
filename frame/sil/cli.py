@@ -885,8 +885,8 @@ def cmd_scan(args) -> int:
                   "summaries settled; some flows between files may be missing", file=sys.stderr)
         if scope.get("cross_file") is False and scope.get("reason"):
             print(f"Warning: {scope['reason']}", file=sys.stderr)
-        if scope.get("alone"):
-            print(f"Warning: {scope['alone']}", file=sys.stderr)
+        if scope.get("partitioned"):
+            print(f"Warning: {scope['partitioned']}", file=sys.stderr)
     hunt = hunt_summary(getattr(scanner, "last_hunt_status", None))
     if hunt is not None:
         extra["hunt"] = hunt

@@ -20,6 +20,10 @@ def _index(tmp_path, files, language=None):
     return q.ctx
 
 
+def _line_of(tmp_path, rel, needle):
+    return next(i + 1 for i, text in enumerate((tmp_path / rel).read_text().splitlines()) if needle in text)
+
+
 def _calls(ctx, proc_name):
     out = []
     for p in ctx.programs:
@@ -280,3 +284,580 @@ def test_a_conditional_update_written_inside_another_call_s_argument(tmp_path):
     """})
     r = json.loads(ctx.check("LinksQueries.consume", 12, "atomic_write"))
     assert r["verdict"] == "proved", r
+
+
+# -- C# repositories over EF Core (simplcommerce GHSA-jphx) ------------------------------------
+
+SIMPL = {
+    "Infra/IRepository.cs": """
+        using System.Linq;
+        namespace Shop.Infrastructure.Data
+        {
+            public interface IRepository<T>
+            {
+                IQueryable<T> Query();
+                void Add(T entity);
+                void SaveChanges();
+            }
+        }
+    """,
+    "Core/Repository.cs": """
+        using System.Linq;
+        using Microsoft.EntityFrameworkCore;
+        using Shop.Infrastructure.Data;
+        namespace Shop.Core.Data
+        {
+            public class RepositoryWithTypedId<T, TId> where T : class
+            {
+                public RepositoryWithTypedId(ShopDbContext context)
+                {
+                    Context = context;
+                    DbSet = Context.Set<T>();
+                }
+                protected DbContext Context { get; }
+                protected DbSet<T> DbSet { get; }
+                public void Add(T entity)
+                {
+                    DbSet.Add(entity);
+                }
+                public void SaveChanges()
+                {
+                    Context.SaveChanges();
+                }
+                public IQueryable<T> Query()
+                {
+                    return DbSet;
+                }
+            }
+            public class Repository<T> : RepositoryWithTypedId<T, long>, IRepository<T> where T : class
+            {
+                public Repository(ShopDbContext context) : base(context)
+                {
+                }
+            }
+            public class AuditLog
+            {
+                public void SaveChanges()
+                {
+                }
+            }
+            public class ShopDbContext : DbContext
+            {
+            }
+        }
+    """,
+    "Orders/OrderService.cs": """
+        using System;
+        using System.Linq;
+        using System.Threading.Tasks;
+        using Microsoft.EntityFrameworkCore;
+        using Shop.Infrastructure.Data;
+        namespace Shop.Orders
+        {
+            public class Product { public int StockQuantity { get; set; } }
+            public class CheckoutItem { public Product Product { get; set; } public int Quantity { get; set; } }
+            public class Checkout { public Guid Id { get; set; } public System.Collections.Generic.List<CheckoutItem> CheckoutItems { get; set; } }
+            public class Order { public string Note { get; set; } }
+            public class OrderService
+            {
+                private readonly IRepository<Order> _orderRepository;
+                private readonly IRepository<Checkout> _checkoutRepository;
+                public OrderService(IRepository<Order> orderRepository, IRepository<Checkout> checkoutRepository)
+                {
+                    _orderRepository = orderRepository;
+                    _checkoutRepository = checkoutRepository;
+                }
+                public async Task<bool> CreateOrder(Guid checkoutId)
+                {
+                    var checkout = await _checkoutRepository
+                       .Query()
+                       .Where(x => x.Id == checkoutId).FirstOrDefaultAsync();
+                    var order = new Order();
+                    foreach (var checkoutItem in checkout.CheckoutItems)
+                    {
+                        if (checkoutItem.Product.StockQuantity < checkoutItem.Quantity)
+                        {
+                            return false;
+                        }
+                        checkoutItem.Product.StockQuantity = checkoutItem.Product.StockQuantity - checkoutItem.Quantity;
+                    }
+                    order.Note = "new";
+                    _orderRepository.Add(order);
+                    _orderRepository.SaveChanges();
+                    return true;
+                }
+            }
+        }
+    """,
+}
+
+
+def test_a_change_to_an_entity_read_through_a_project_repository_is_a_write_its_save_makes(tmp_path):
+    """The read is `_repo.Query()` (a project method returning its `DbSet<T>`) chained with LINQ
+    over lines; `SaveChanges` is the inherited base's (two classes define one), reached through
+    the field's interface type; the write is the assignment to the tracked entity."""
+    ctx = _index(tmp_path, SIMPL, language="csharp")
+    rel = "Orders/OrderService.cs"
+    write = _line_of(tmp_path, rel, "StockQuantity = checkoutItem")
+    r = json.loads(ctx.check("Shop.Orders.OrderService.CreateOrder", write, "atomic_write"))
+    assert r["verdict"] == "refuted", r
+    assert r["witness"][0] == {"line": _line_of(tmp_path, rel, "var checkout"), "event":
+                               "reads stored data (Microsoft.EntityFrameworkCore.DbSet.Where.FirstOrDefaultAsync)"}
+    assert r["witness"][1] == {"line": _line_of(tmp_path, rel, "if (checkoutItem"), "event": "decides on StockQuantity"}
+    # a property of an entity the function created is no write of what it read
+    r = json.loads(ctx.check("Shop.Orders.OrderService.CreateOrder", _line_of(tmp_path, rel, "order.Note"),
+                             "atomic_write"))
+    assert "no write of stored data" in r["reason"], r
+
+
+EF_FLUENT = {
+    "Db.cs": """
+        using Microsoft.EntityFrameworkCore;
+        using Microsoft.EntityFrameworkCore.Metadata.Builders;
+        namespace Shop
+        {
+            public class Product { public int Id { get; set; } public int Stock { get; set; } public byte[] Version { get; set; } }
+            public class Coupon { public int Id { get; set; } public int Uses { get; set; } public int Rev { get; set; } }
+            public class Order { public int Id { get; set; } public int Total { get; set; } }
+            public class Gift { public int Id { get; set; } public int Left { get; set; } public byte[] Stamp { get; set; } }
+            public class ShopContext : DbContext
+            {
+                public DbSet<Product> Products { get; set; }
+                public DbSet<Coupon> Coupons { get; set; }
+                public DbSet<Order> Orders { get; set; }
+                public DbSet<Gift> Gifts { get; set; }
+                protected override void OnModelCreating(ModelBuilder modelBuilder)
+                {
+                    modelBuilder.Entity<Product>().Property(p => p.Version).IsRowVersion();
+                    modelBuilder.Entity<Gift>(b =>
+                    {
+                        b.HasKey(g => g.Id);
+                        b.Property(g => g.Stamp).IsRowVersion();
+                    });
+                }
+            }
+            public class CouponConfiguration : IEntityTypeConfiguration<Coupon>
+            {
+                public void Configure(EntityTypeBuilder<Coupon> builder)
+                {
+                    builder.Property(c => c.Rev).IsConcurrencyToken();
+                }
+            }
+        }
+    """,
+    "Svc.cs": """
+        using System.Threading.Tasks;
+        using Microsoft.EntityFrameworkCore;
+        namespace Shop
+        {
+            public class StockService
+            {
+                private readonly ShopContext _db;
+                public StockService(ShopContext db)
+                {
+                    _db = db;
+                }
+                public async Task Take(int id, int n)
+                {
+                    var p = await _db.Products.FindAsync(id);
+                    p.Stock = p.Stock - n;
+                    await _db.SaveChangesAsync();
+                }
+                public async Task Use(int id)
+                {
+                    var c = await _db.Coupons.FindAsync(id);
+                    c.Uses = c.Uses + 1;
+                    await _db.SaveChangesAsync();
+                }
+                public async Task Bump(int id)
+                {
+                    var o = await _db.Orders.FindAsync(id);
+                    o.Total = o.Total + 1;
+                    await _db.SaveChangesAsync();
+                }
+                public async Task Give(int id)
+                {
+                    var g = await _db.Gifts.FindAsync(id);
+                    g.Left = g.Left - 1;
+                    await _db.SaveChangesAsync();
+                }
+            }
+        }
+    """,
+}
+
+
+def test_ef_core_concurrency_tokens_configured_with_the_fluent_api(tmp_path):
+    ctx = _index(tmp_path, EF_FLUENT, language="csharp")
+    for name, needle in (("Take", "p.Stock = "), ("Use", "c.Uses = "), ("Give", "g.Left = ")):
+        r = json.loads(ctx.check(f"Shop.StockService.{name}", _line_of(tmp_path, "Svc.cs", needle), "atomic_write"))
+        assert r["verdict"] == "proved" and "optimistic lock" in r["reason"], (name, r)
+    r = json.loads(ctx.check("Shop.StockService.Bump", _line_of(tmp_path, "Svc.cs", "o.Total = "),
+                             "atomic_write"))     # no token on Order
+    assert r["verdict"] == "refuted", r
+
+
+def test_a_multi_line_csharp_receiver_keeps_its_declared_type(tmp_path):
+    ctx = _index(tmp_path, SIMPL, language="csharp")
+    calls = [i for p in ctx.programs for proc in p.procedures.values() if proc.name.endswith("CreateOrder")
+             for n in proc.nodes.values() for i in n.instrs if type(i).__name__ == "Call"]
+    first = min(calls, key=lambda c: c.loc.line)
+    assert first.get_func_name() == "_checkoutRepository.Query" and first.callee_class == "IRepository"
+
+
+# -- Medusa: services injected into typed fields; a lock taken after the read, then re-read ----
+
+MEDUSA = """
+    import { ModulesSdkTypes, Context } from "@medusajs/framework/types"
+    import { SqlEntityManager } from "@medusajs/framework/mikro-orm/postgresql"
+
+    type InjectedDependencies = { promotionService: any }
+
+    export default class PromotionModuleService {
+      protected promotionService_: ModulesSdkTypes.IMedusaInternalService<any>
+
+      constructor({ promotionService }: InjectedDependencies) {
+        this.promotionService_ = promotionService
+      }
+
+      protected async listActive_(filters: any, sharedContext?: Context) {
+        return await this.promotionService_.list(filters, {}, sharedContext)
+      }
+
+      async registerUsage(codes: string[], sharedContext: Context = {}) {
+        const usage = new Map<string, any>()
+        {reads}
+        for (const promotion of existing) {
+          const used = (promotion.used ?? 0) + 1
+          if (used > promotion.limit) {
+            throw new Error("Promotion usage exceeds the limit.")
+          }
+          usage.set(promotion.id, { id: promotion.id, used })
+        }
+        await this.promotionService_.update(Array.from(usage.values()), sharedContext)
+      }
+    }
+"""
+
+LOCKED = """let existing = await this.listActive_({ code: codes }, sharedContext)
+        const ids = existing.map((p) => p.id)
+        const manager = sharedContext.transactionManager as SqlEntityManager
+        const knex = manager?.getTransactionContext()
+        await knex("promotion")
+          .whereIn("id", ids)
+          .forUpdate()
+          .select("id")
+        {again}"""
+
+
+def _medusa(tmp_path, reads):
+    ctx = _index(tmp_path, {"promotion-module.ts": MEDUSA.replace("{reads}", reads)})
+    line = next(i + 1 for i, text in enumerate((tmp_path / "promotion-module.ts").read_text().splitlines())
+                if "promotionService_.update" in text)
+    return json.loads(ctx.check("PromotionModuleService.registerUsage", line, "atomic_write"))
+
+
+def test_a_service_held_in_a_field_declared_with_a_library_type(tmp_path):
+    """medusa GHSA-6r9h: the container's destructured argument names no type; the field's
+    declaration does."""
+    r = _medusa(tmp_path, "const existing = await this.listActive_({ code: codes }, sharedContext)")
+    assert r["verdict"] == "refuted", r
+    assert r["witness"][0]["event"] == "reads stored data (PromotionModuleService.listActive_)"
+
+
+def test_rows_locked_after_a_read_that_only_picks_them_then_read_again(tmp_path):
+    """medusa's fix: read the promotions, lock their rows with knex's forUpdate through the
+    MikroORM transaction, read them again, write."""
+    r = _medusa(tmp_path, LOCKED.replace(
+        "{again}", "existing = await this.listActive_({ code: codes }, sharedContext)"))
+    assert r["verdict"] == "proved" and "reads again under the lock" in r["reason"], r
+
+
+def test_a_lock_after_the_read_whose_values_are_still_used_is_not_proof(tmp_path):
+    r = _medusa(tmp_path, LOCKED.replace("{again}", "const fresh = await this.listActive_({ code: codes }, sharedContext)"))
+    assert r["verdict"] == "unknown" and "comes after the read" in r["reason"], r
+
+
+# -- Mongoose: optimisticConcurrency on the model's schema ------------------------------------
+
+def _mongoose(tmp_path, option):
+    return _index(tmp_path, {
+        "models/coupon.js": f"""
+            const mongoose = require('mongoose');
+            const couponSchema = new mongoose.Schema({{ code: String, uses: Number, maxUses: Number }}{option});
+            module.exports = mongoose.model('Coupon', couponSchema);
+        """,
+        "redeem.js": """
+            const Coupon = require('./models/coupon');
+            async function redeem(code) {
+              const coupon = await Coupon.findOne({ code });
+              if (coupon.uses >= coupon.maxUses) throw new Error('used up');
+              coupon.uses = coupon.uses + 1;
+              await coupon.save();
+            }
+            module.exports = { redeem };
+        """})
+
+
+def test_a_document_of_a_model_whose_schema_checks_versions_is_saved_conditionally(tmp_path):
+    ctx = _mongoose(tmp_path, ", { optimisticConcurrency: true }")
+    r = json.loads(ctx.check("redeem", _line_of(tmp_path, "redeem.js", "coupon.save"), "atomic_write"))
+    assert r["verdict"] == "proved" and "optimisticConcurrency" in r["reason"], r
+
+
+def test_without_the_option_or_with_it_off_a_document_save_is_a_plain_write(tmp_path):
+    for option in ("", ", { optimisticConcurrency: false }"):
+        ctx = _mongoose(tmp_path, option)
+        r = json.loads(ctx.check("redeem", _line_of(tmp_path, "redeem.js", "coupon.save"), "atomic_write"))
+        assert r["verdict"] == "refuted", (option, r)
+
+
+# -- Spring WebFlux: the decision and the write inside a lambda (appsmith GHSA-9wcp) ----------
+
+APPSMITH = {
+    "src/com/acme/UserRepository.java": """
+        package com.acme;
+        import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
+        import reactor.core.publisher.Mono;
+        public interface UserRepository extends ReactiveMongoRepository<User, String> {
+            Mono<Long> countByIsSystemGenerated(boolean generated);
+        }
+    """,
+    "src/com/acme/User.java": """
+        package com.acme;
+        public class User {
+            private String email;
+            public void setEmail(String e) { email = e; }
+        }
+    """,
+    "src/com/acme/UserService.java": """
+        package com.acme;
+        import reactor.core.publisher.Mono;
+        public class UserService {
+            private final UserRepository repository;
+            public UserService(UserRepository repository) {
+                this.repository = repository;
+            }
+            public Mono<Boolean> isUsersEmpty() {
+                return repository.countByIsSystemGenerated(false).map(count -> count == 0);
+            }
+            public Mono<User> create(User user) {
+                return repository.save(user);
+            }
+        }
+    """,
+    "src/com/acme/Signup.java": """
+        package com.acme;
+        import reactor.core.publisher.Mono;
+        public class Signup {
+            private final UserService userService;
+            public Signup(UserService userService) {
+                this.userService = userService;
+            }
+            public Mono<User> signupSuper(String email) {
+                return userService
+                        .isUsersEmpty()
+                        .flatMap(isEmpty -> {
+                            if (!Boolean.TRUE.equals(isEmpty)) {
+                                return Mono.error(new IllegalStateException("exists"));
+                            }
+                            final User user = new User();
+                            user.setEmail(email);
+                            return userService.create(user);
+                        });
+            }
+        }
+    """,
+}
+
+
+def test_a_check_and_a_write_inside_a_reactive_lambda_follow_the_read_they_chain_on(tmp_path):
+    ctx = _index(tmp_path, APPSMITH, language="java")
+    rel = "src/com/acme/Signup.java"
+    r = json.loads(ctx.check("Signup.signupSuper", _line_of(tmp_path, rel, "userService.create"), "atomic_write"))
+    assert r["verdict"] == "refuted", r
+    assert [w["line"] for w in r["witness"]] == [
+        _line_of(tmp_path, rel, "return userService"), _line_of(tmp_path, rel, "if (!Boolean"),
+        _line_of(tmp_path, rel, "userService.create")]
+
+
+# -- Fastify: plugins handed to fastify-plugin through a project wrapper (zipline) ------------
+
+def test_a_plugin_registered_through_a_project_wrapper_gets_the_fastify_instance(tmp_path):
+    ctx = _index(tmp_path, {
+        "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } } }\n',
+        "src/server/typedPlugin.ts": """
+            import fastifyPlugin from 'fastify-plugin';
+            export default function typedPlugin(plugin: any, opts?: any) {
+              return fastifyPlugin(plugin as any, opts);
+            }
+        """,
+        "src/server/routes/register.ts": """
+            import typedPlugin from '@/server/typedPlugin';
+            export const PATH = '/api/auth/register';
+            export default typedPlugin(
+              async (server) => {
+                server.post(PATH, { schema: {} }, async (req, res) => {
+                  return res.send({ ok: true });
+                });
+              },
+              { name: PATH },
+            );
+        """})
+    handlers = [h for h in ctx.index.handlers if h.file == "src/server/routes/register.ts"]
+    assert len(handlers) == 1 and handlers[0].line == 5, [(h.name, h.line) for h in ctx.index.handlers]
+
+
+def test_a_typescript_local_declared_or_cast_with_a_library_type(tmp_path):
+    ctx = _index(tmp_path, {"q.ts": """
+        import { SqlEntityManager } from '@mikro-orm/postgresql';
+        import { EntityManager } from '@mikro-orm/core';
+        export async function run(ctx: any) {
+          const manager = ctx.transactionManager as SqlEntityManager;
+          const em: EntityManager = ctx.em;
+          manager?.getKnex();
+          em.flush();
+        }
+    """})
+    ids = {name: cid for _, name, cid in _calls(ctx, "run")}
+    assert ids["manager?.getKnex"] == "@mikro-orm/postgresql.SqlEntityManager.getKnex"
+    assert ids["em.flush"] == "@mikro-orm/core.EntityManager.flush"
+
+
+CLAIM_REPOSITORY = """
+    package com.acme;
+    import org.bson.Document;
+    import org.springframework.data.mongodb.core.FindAndModifyOptions;
+    import org.springframework.data.mongodb.core.ReactiveMongoOperations;
+    import org.springframework.data.mongodb.core.query.Criteria;
+    import org.springframework.data.mongodb.core.query.Query;
+    import org.springframework.data.mongodb.core.query.Update;
+    import reactor.core.publisher.Mono;
+    public class ClaimRepository {
+        private final ReactiveMongoOperations ops;
+        public ClaimRepository(ReactiveMongoOperations ops) {
+            this.ops = ops;
+        }
+        public Mono<Boolean> claimSlot() {
+            Query query = new Query(Criteria.where("_id").is("super-user-setup"));
+            Update update = new Update().setOnInsert("_id", "super-user-setup").setOnInsert("status", "CLAIMED");
+            FindAndModifyOptions options = FindAndModifyOptions.options().upsert(true).returnNew(false);
+            return ops.findAndModify(query, update, options, Document.class, "superUserSetupLock")
+                    .hasElement()
+                    .map(existed -> !existed);
+        }
+    }
+"""
+
+SIGNUP_CLAIMED = """
+    package com.acme;
+    import reactor.core.publisher.Mono;
+    public class SignupFixed {
+        private final UserService userService;
+        private final ClaimRepository claims;
+        public SignupFixed(UserService userService, ClaimRepository claims) {
+            this.userService = userService;
+            this.claims = claims;
+        }
+        public Mono<User> signupSuper(String email) {
+            return claims.claimSlot().flatMap(claimed -> {
+                {check}
+                return createSuper(email);
+            });
+        }
+        private Mono<User> createSuper(String email) {
+            return userService
+                    .isUsersEmpty()
+                    .flatMap(isEmpty -> {
+                        if (!Boolean.TRUE.equals(isEmpty)) {
+                            return Mono.error(new IllegalStateException("exists"));
+                        }
+                        final User user = new User();
+                        user.setEmail(email);
+                        return userService.create(user);
+                    });
+        }
+    }
+"""
+
+
+def _claimed(tmp_path, check):
+    files = {**APPSMITH, "src/com/acme/ClaimRepository.java": CLAIM_REPOSITORY,
+             "src/com/acme/SignupFixed.java": SIGNUP_CLAIMED.replace("{check}", check)}
+    ctx = _index(tmp_path, files, language="java")
+    rel = "src/com/acme/SignupFixed.java"
+    outer = json.loads(ctx.check("SignupFixed.signupSuper", _line_of(tmp_path, rel, "return createSuper"),
+                                 "atomic_write"))
+    inner = json.loads(ctx.check("SignupFixed.createSuper", _line_of(tmp_path, rel, "userService.create"),
+                                 "atomic_write"))
+    return outer, inner
+
+
+def test_a_claim_the_code_goes_on_from_only_when_it_won_serializes_what_follows(tmp_path):
+    """appsmith's fix: `findAndModify` upserting a fixed `_id` with `setOnInsert` (one request
+    inserts it), then the signup only when the claim did."""
+    outer, inner = _claimed(tmp_path, 'if (!Boolean.TRUE.equals(claimed)) { return Mono.error(new IllegalStateException("taken")); }')
+    assert outer["verdict"] == "proved" and "claims what it changes" in outer["reason"], outer
+    assert inner["verdict"] == "unknown" and "claims first" in inner["reason"], inner
+
+
+def test_a_claim_whose_result_is_not_checked_protects_nothing(tmp_path):
+    outer, inner = _claimed(tmp_path, "")
+    assert outer["verdict"] != "proved", outer
+    assert inner["verdict"] == "refuted", inner
+
+
+def test_a_sql_claim_checked_before_the_read_serializes_what_follows(tmp_path):
+    ctx = _index(tmp_path, {"svc.js": """
+        const { Pool } = require('pg');
+        const pool = new Pool();
+        async function redeem(code, user) {
+          const claim = await pool.query('INSERT INTO claims (code, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [code, user]);
+          if (claim.rowCount === 0) throw new Error('taken');
+          const { rows } = await pool.query('SELECT uses, max_uses FROM coupons WHERE code = $1', [code]);
+          if (rows[0].uses >= rows[0].max_uses) throw new Error('used up');
+          await pool.query('UPDATE coupons SET uses = $1 WHERE code = $2', [rows[0].uses + 1, code]);
+        }
+        async function redeemLate(code, user) {
+          const { rows } = await pool.query('SELECT uses, max_uses FROM coupons WHERE code = $1', [code]);
+          const claim = await pool.query('INSERT INTO claims (code, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [code, user]);
+          if (claim.rowCount === 0) throw new Error('taken');
+          await pool.query('UPDATE coupons SET uses = $1 WHERE code = $2', [rows[0].uses + 1, code]);
+        }
+        module.exports = { redeem, redeemLate };
+    """})
+    lines = [i + 1 for i, t in enumerate((tmp_path / "svc.js").read_text().splitlines()) if "UPDATE coupons" in t]
+    r = json.loads(ctx.check("redeem", lines[0], "atomic_write"))
+    assert r["verdict"] == "proved" and "claims what it changes" in r["reason"], r
+    r = json.loads(ctx.check("redeemLate", lines[1], "atomic_write"))       # the read came first
+    assert r["verdict"] == "refuted", r
+
+
+def test_a_field_an_ancestor_declares_with_a_type_parameter_has_the_type_the_subclass_binds(tmp_path):
+    """appsmith: `protected final R repository` in `BaseService<R, T, ID>`, `UserServiceImpl extends
+    BaseService<UserRepository, User, String>`, and `isUsersEmpty` implemented by the fragment
+    `CustomUserRepositoryImpl` of the Spring Data repository `UserRepository`."""
+    ctx = _index(tmp_path, {
+        "src/BaseService.java": """
+            public abstract class BaseService<R extends BaseRepository, T, ID> {
+                protected final R repository;
+                public BaseService(R repository) { this.repository = repository; }
+            }
+        """,
+        "src/BaseRepository.java": "public interface BaseRepository {}\n",
+        "src/CustomUserRepository.java": "public interface CustomUserRepository { boolean isUsersEmpty(); }\n",
+        "src/UserRepository.java": "public interface UserRepository extends BaseRepository, CustomUserRepository {}\n",
+        "src/CustomUserRepositoryImpl.java": """
+            public class CustomUserRepositoryImpl implements CustomUserRepository {
+                public boolean isUsersEmpty() { return true; }
+            }
+        """,
+        "src/OtherImpl.java": "public class OtherImpl { public boolean isUsersEmpty() { return false; } }\n",
+        "src/UserServiceImpl.java": """
+            public class UserServiceImpl extends BaseService<UserRepository, User, String> {
+                public UserServiceImpl(UserRepository r) { super(r); }
+                public boolean isUsersEmpty() { return repository.isUsersEmpty(); }
+            }
+        """}, language="java")
+    d = ctx.resolve_call("src/UserServiceImpl.java", "UserServiceImpl.isUsersEmpty", "repository.isUsersEmpty")
+    assert d is not None and d["name"] == "CustomUserRepositoryImpl.isUsersEmpty", d

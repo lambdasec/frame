@@ -334,6 +334,8 @@ class HuntContext:
         self._workdir: Optional[str] = None
         self._graph: Optional[Tuple[Dict[str, List[Dict[str, Any]]], Dict[Tuple[str, str], List[Tuple[str, int]]]]] = None
         self._canon: Dict[Tuple[str, str], Dict[str, str]] = {}
+        self._receiver_types: Dict[Tuple[str, str], Dict[str, str]] = {}
+        self._implementations: Optional[Dict[str, set]] = None
         self._callers: Optional[Dict[Tuple[str, str], List[Tuple[str, str]]]] = None
         self._programs_by_file: Dict[str, Any] = {}
 
@@ -351,11 +353,14 @@ class HuntContext:
         """A handler or any project function: {program, proc, name, file, line, end_line}. With
         `line`, the one whose body holds it wins (two classes' `post` in one file)."""
         h = self.handler(name, file)
+        if h is not None and file and not (h.file == file or h.file.endswith("/" + file)):
+            h = None                # a handler of that name in another file is not the one asked for
         hloc = None
         if h is not None and getattr(h, "program", None) is not None:
             hloc = {"program": h.program, "proc": h.name, "name": h.name, "file": h.file,
                     "line": h.line, "end_line": h.end_line or h.line, "handler": h}
-            if not line or hloc["line"] <= int(line) <= hloc["end_line"]:
+            if (not line or hloc["line"] <= int(line) <= hloc["end_line"]) and \
+                    (h.name == name or name == simple_name(name)):
                 return hloc
         want = simple_name(name)
         found = []
@@ -366,11 +371,13 @@ class HuntContext:
             for pname, proc in (getattr(prog, "procedures", {}) or {}).items():
                 if pname == name or simple_name(pname) == want:
                     loc = getattr(proc, "loc", None)
-                    line = getattr(loc, "line", 0) if loc else 0
+                    start = getattr(loc, "line", 0) if loc else 0
                     found.append({"program": prog, "proc": pname, "name": pname, "file": pf,
-                                  "line": line, "end_line": proc_end_line(proc, line),
+                                  "line": start, "end_line": proc_end_line(proc, start),
                                   "handler": h})
         exact = [f for f in found if f["name"] == name]
+        if exact and hloc is not None and h.name != name:
+            hloc = None             # `A.save` asked for by its full name, not the handler `B.save`
         pick = (exact or found)
         if line:
             inside = [f for f in pick if f["line"] <= int(line) <= (f["end_line"] or f["line"])]
@@ -385,6 +392,7 @@ class HuntContext:
             defs: Dict[str, List[Dict[str, Any]]] = {}
             calls: Dict[Tuple[str, str], List[Tuple[str, int]]] = {}
             canon: Dict[Tuple[str, str], Dict[str, str]] = {}
+            typed: Dict[Tuple[str, str], Dict[str, str]] = {}
             self._programs_by_file = {}
             for prog in self.programs:
                 pf = _program_file(prog, self.repo_root)
@@ -412,8 +420,12 @@ class HuntContext:
                             out.append((callee, line))
                             if getattr(ins, "canonical", None):
                                 canon.setdefault((pf, pname), {})[callee] = str(ins.canonical)
+                            if getattr(ins, "callee_class", None):          # Java / C# receiver type
+                                typed.setdefault((pf, pname), {})[callee] = str(ins.callee_class)
                     calls[(pf, pname)] = sorted(set(out), key=lambda c: (c[1], c[0]))
             self._canon = canon
+            self._receiver_types = typed
+            self._implementations = None
             self._callers = None
             self._graph = (defs, calls)
         return self._graph
@@ -444,6 +456,9 @@ class HuntContext:
             hit = [d for d in ds if cid == d["name"] or cid.endswith("." + d["name"])]
             if len(hit) == 1:
                 return hit[0]
+        typed = self._by_receiver_type(file, proc, callee, ds)
+        if typed is not None:
+            return typed
         head, _, member = callee.partition(".")
         if head in ("this", "self") and member and "." not in member and "." in proc:
             own = proc.rsplit(".", 1)[0] + "." + member
@@ -451,6 +466,115 @@ class HuntContext:
             if len(hit) == 1:
                 return hit[0]
         return None
+
+    def _by_receiver_type(self, file: str, proc: str, callee: str,
+                          ds: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Java / C#: the definition a call names through its receiver's declared type
+        (`Call.callee_class`): the method of that class, else of the one project class that
+        implements or extends it (`IRepository<T>` -> `Repository<T>`). None when it does not
+        decide between the definitions."""
+        cls = (self._receiver_types.get((file, proc)) or {}).get(callee) or self._field_type(proc, callee)
+        if not cls:
+            return None
+        cls = cls.split("<", 1)[0].rsplit(".", 1)[-1]
+
+        def owner(d) -> str:
+            return str(d["name"]).split("#", 1)[0].rsplit(".", 1)[0].rsplit(".", 1)[-1]
+        own = [d for d in ds if owner(d) == cls]
+        if len(own) == 1:
+            return own[0]
+        if own:
+            return None
+        impls = self._implementing(cls)
+        hit = [d for d in ds if owner(d) in impls]
+        if not hit:                     # `Repository<T> : RepositoryWithTypedId<T, long>, IRepository<T>`
+            inherited = {a for c in impls for a in self._ancestors(c)}
+            hit = [d for d in ds if owner(d) in inherited]
+        if not hit:                     # an interface composed of others (a Spring Data repository
+            parts = {i for a in self._ancestors(cls) for i in self._implementing(a)}  # and its fragments)
+            parts |= {a for c in parts for a in self._ancestors(c)}
+            hit = [d for d in ds if owner(d) in parts]
+        return hit[0] if len(hit) == 1 else None
+
+    def _field_type(self, proc: str, callee: str) -> Optional[str]:
+        """Java: the type of the field a call is made on (`repository.isUsersEmpty()`, or
+        `this.repository...`) when the caller's class or an ancestor declares it; a field declared
+        with a type parameter (`protected final R repository` in `BaseService<R, T, ID>`) has the
+        type the subclass's `extends BaseService<UserRepository, ...>` gives it."""
+        parts = callee.split(".")
+        if parts and parts[0] == "this":
+            parts = parts[1:]
+        if len(parts) != 2 or "." not in proc:
+            return None
+        classes = self._class_index()
+        cls = proc.split("#", 1)[0].rsplit(".", 1)[0].rsplit(".", 1)[-1]
+        binding: Dict[str, str] = {}               # type parameter -> what the subclass bound it to
+        for _ in range(8):
+            info = classes.get(cls)
+            if info is None:
+                return None
+            written = (getattr(info, "field_types", None) or {}).get(parts[0])
+            if written:
+                name = written.split("<", 1)[0].rsplit(".", 1)[-1]
+                return binding.get(name, name) if name not in (getattr(info, "type_params", None) or []) \
+                    or name in binding else None
+            nxt = next((str(b).split("<", 1)[0].rsplit(".", 1)[-1] for b in (getattr(info, "bases", None) or [])
+                        if str(b).split("<", 1)[0].rsplit(".", 1)[-1] in classes
+                        and classes[str(b).split("<", 1)[0].rsplit(".", 1)[-1]].kind != "interface"), None)
+            if nxt is None:
+                return None
+            args = (getattr(info, "base_type_args", None) or {}).get(nxt) or []
+            params = getattr(classes[nxt], "type_params", None) or []
+            binding = {p: binding.get(a, a) for p, a in zip(params, args)}
+            cls = nxt
+        return None
+
+    def _class_index(self) -> Dict[str, Any]:
+        cached = self.__dict__.get("_class_infos")
+        if cached is None:
+            cached = {}
+            for prog in self.programs:
+                for name, info in (getattr(prog, "class_info", None) or {}).items():
+                    cached.setdefault(str(name).rsplit(".", 1)[-1], info)
+            self._class_infos = cached
+        return cached
+
+    def _class_bases(self) -> Dict[str, set]:
+        if self._implementations is None:
+            subs: Dict[str, set] = {}
+            supers: Dict[str, set] = {}
+            for prog in self.programs:
+                for name, info in (getattr(prog, "class_info", None) or {}).items():
+                    simple = str(name).rsplit(".", 1)[-1]
+                    for b in getattr(info, "bases", None) or []:
+                        base = str(b).split("<", 1)[0].rsplit(".", 1)[-1]
+                        subs.setdefault(base, set()).add(simple)
+                        supers.setdefault(simple, set()).add(base)
+            self._implementations = subs
+            self._supertypes = supers
+        return self._implementations
+
+    def _implementing(self, cls: str) -> set:
+        """Simple names of the project classes that implement or extend `cls`, transitively."""
+        subs = self._class_bases()
+        out, todo = set(), [cls]
+        while todo:
+            for s_ in subs.get(todo.pop(), ()):
+                if s_ not in out:
+                    out.add(s_)
+                    todo.append(s_)
+        return out
+
+    def _ancestors(self, cls: str) -> set:
+        """Simple names of what a project class extends or implements, transitively."""
+        self._class_bases()
+        out, todo = set(), [cls]
+        while todo:
+            for b in getattr(self, "_supertypes", {}).get(todo.pop(), ()):
+                if b not in out:
+                    out.add(b)
+                    todo.append(b)
+        return out
 
     def callers_of(self, file: str, name: str) -> List[Tuple[str, str]]:
         """(file, procedure) of every function whose call `resolve_call` resolves to this one."""
@@ -470,7 +594,8 @@ class HuntContext:
         self.index = build_index(self.programs, self.raw_findings, self.repo_root)
         self._graph = None
         self._callers = None
-        for memo in ("_race_summaries", "_race_classes", "_rate_limit_globals", "_credential_memo"):
+        for memo in ("_race_summaries", "_race_classes", "_rate_limit_globals", "_credential_memo",
+                     "_race_returns", "_race_configured", "_race_models", "_class_infos"):
             self.__dict__.pop(memo, None)
 
     # -- tools ----------------------------------------------------------------------------

@@ -68,6 +68,12 @@ class ClassInfo:
     # The declared type of each field / property, as written (`DbSet<Product>`, `CouponRepository`;
     # Java and C#): what a member chain such as `_db.Products` holds.
     field_types: Dict[str, str] = field(default_factory=dict)
+    # Java: the type parameters it declares (`BaseService<R, T, ID>` -> R, T, ID) and the type
+    # arguments it gives each base (`extends BaseService<UserRepository, User, String>` ->
+    # {"BaseService": ["UserRepository", "User", "String"]}), as simple names, so a field an
+    # ancestor declares with a type parameter has the type the subclass binds.
+    type_params: List[str] = field(default_factory=list)
+    base_type_args: Dict[str, List[str]] = field(default_factory=dict)
 
 
 class ImportTable:

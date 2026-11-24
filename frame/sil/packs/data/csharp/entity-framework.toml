@@ -35,6 +35,26 @@ call = ["System.ComponentModel.DataAnnotations.ConcurrencyCheckAttribute",
         "System.ComponentModel.DataAnnotations.TimestampAttribute"]
 kind = "version"
 
+# The same token configured in code (the fluent API): `modelBuilder.Entity<Product>().Property(p =>
+# p.Version).IsRowVersion()` in `OnModelCreating`, or `builder.Property(c => c.Rev)
+# .IsConcurrencyToken()` in an `IEntityTypeConfiguration<Coupon>`'s `Configure(EntityTypeBuilder<Coupon>
+# builder)`. The entity is the chain's type argument, else the builder's.
+# https://learn.microsoft.com/en-us/ef/core/saving/concurrency#configuring-concurrency-tokens
+[[concurrency]]
+call = ["Microsoft.EntityFrameworkCore.ModelBuilder.Entity.**.IsConcurrencyToken",
+        "Microsoft.EntityFrameworkCore.ModelBuilder.Entity.**.IsRowVersion",
+        "Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder.**.IsConcurrencyToken",
+        "Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder.**.IsRowVersion"]
+kind = "version"
+
+# SaveChanges saves every change the context tracks on the entities it loaded: a property assigned
+# on an entity read earlier (`item.Product.Stock = item.Product.Stock - n`) is written there.
+# https://learn.microsoft.com/en-us/ef/core/change-tracking/
+[[concurrency]]
+call = ["Microsoft.EntityFrameworkCore.DbContext.SaveChanges", "Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync"]
+kind = "write"
+tracked = true
+
 # Reading entities through a DbSet, for the read-then-write check only (never taint sinks).
 # https://learn.microsoft.com/en-us/ef/core/querying/
 [[concurrency]]
@@ -42,7 +62,9 @@ call = ["Microsoft.EntityFrameworkCore.DbSet.Find", "Microsoft.EntityFrameworkCo
         "Microsoft.EntityFrameworkCore.DbSet.First*", "Microsoft.EntityFrameworkCore.DbSet.Single*",
         "Microsoft.EntityFrameworkCore.DbSet.Last*", "Microsoft.EntityFrameworkCore.DbSet.Where",
         "Microsoft.EntityFrameworkCore.DbSet.Any*", "Microsoft.EntityFrameworkCore.DbSet.Count*",
-        "Microsoft.EntityFrameworkCore.DbSet.ToList*", "Microsoft.EntityFrameworkCore.DbSet.Include"]
+        "Microsoft.EntityFrameworkCore.DbSet.ToList*", "Microsoft.EntityFrameworkCore.DbSet.Include",
+        "Microsoft.EntityFrameworkCore.DbSet.AsQueryable", "Microsoft.EntityFrameworkCore.DbSet.AsNoTracking",
+        "Microsoft.EntityFrameworkCore.DbSet.Select"]
 kind = "read"
 
 # `ExecuteUpdate` / `ExecuteDelete` run one UPDATE / DELETE in the database (EF Core 7+): a

@@ -405,6 +405,7 @@ class ExpCall(Exp):
     # non-object value reads (`instructions.Call.literal_keys`); None when there are none.
     literal_keys: Optional[List[str]] = field(default=None, compare=False, repr=False)
     literal_reads: Optional[Dict[str, List[str]]] = field(default=None, compare=False, repr=False)
+    literal_values: Optional[Dict[str, str]] = field(default=None, compare=False, repr=False)
 
     def __str__(self) -> str:
         args_str = ", ".join(str(a) for a in self.args)

@@ -94,9 +94,11 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                    "atomic_write knows locks, atomic and conditional writes and version fields only "
                    "from the packs' [[concurrency]] facts and the SQL text it can read; an atomic "
                    "increment after a decision on the same field's old value is refuted "
-                   "(check-then-act); a lock after the first read, or a caller of the same name "
-                   "that locks, makes it unknown, never refuted; handles injected without a type "
-                   "(an untyped DI container) are not followed",
+                   "(check-then-act); a lock after the first read is unknown unless the code "
+                   "reads again under it and uses only that, and a caller of the same name that "
+                   "locks or claims first makes it unknown, never refuted; a handle whose type "
+                   "nothing declares (no parameter, field or local type, no library origin) is not "
+                   "followed",
                    "attempt_limit knows a limiter only from the packs' [[rate_limit]] facts; a "
                    "limiter outside the code (a proxy, a gateway) is not seen, and an "
                    "application-wide limiter or a write of stored data (a lockout counter) makes "

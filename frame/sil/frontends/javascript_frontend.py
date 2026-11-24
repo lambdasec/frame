@@ -321,6 +321,7 @@ class JavaScriptFrontend:
                     proc.directives = self._directive_prologue(body)
                 if proc is not None and body is not None:
                     proc.renders = self._returns_markup(body)
+                    proc.local_types = self._declared_local_types(body)
                 params = n.child_by_field_name("parameters")
                 returned = n.child_by_field_name("return_type")
                 if proc is not None and returned is not None:
@@ -1286,6 +1287,7 @@ class JavaScriptFrontend:
                    or f.type == "public_field_definition" and f.child_by_field_name("name") is not None]
         program.class_info[class_name] = ClassInfo(
             name=class_name, kind="class", bases=bases, fields=cfields,
+            field_types=self._declared_field_types(node.child_by_field_name("body")),
             canonical_bases=[self._imports.resolve(b) or b for b in bases],
             annotations=[parse_annotation(self._get_text(d), self._imports)
                          for d in self._leading_decorators(node)])
@@ -1337,6 +1339,30 @@ class JavaScriptFrontend:
         self._current_class = None
 
     _LITERAL_VALUES = frozenset({"string", "number", "true", "false", "null", "undefined", "regex"})
+
+    def _declared_field_types(self, body: Optional[TSNode]) -> Dict[str, str]:
+        """TypeScript: the type each instance field is declared with (`protected repo_:
+        ModulesSdkTypes.IMedusaInternalService<T>` -> `ModulesSdkTypes.IMedusaInternalService`), so
+        `this.repo_` holds one of those whatever value the constructor gives it; a union, an array,
+        a function or an object type names nothing."""
+        out: Dict[str, str] = {}
+        for child in (body.named_children if body is not None else ()):
+            if child.type not in ("field_definition", "public_field_definition") \
+                    or any(c.type == "static" for c in child.children):
+                continue
+            name = child.child_by_field_name("property") or child.child_by_field_name("name")
+            annotation = child.child_by_field_name("type")
+            if name is None or annotation is None or name.type not in ("property_identifier",
+                                                                        "private_property_identifier"):
+                continue
+            inner = annotation.named_children[0] if annotation.named_children else annotation
+            if inner.type == "generic_type" and inner.named_children and \
+                    self._get_text(inner.named_children[0]) == "Promise":
+                continue                                # a pending value, not the handle itself
+            written = self._declared_type_name(annotation)
+            if written:
+                out[self._get_text(name)] = written
+        return out
 
     def _field_initializers(self, body: Optional[TSNode]) -> List[Tuple[str, TSNode]]:
         """(field, value) for each instance field a class body initializes with an expression that
@@ -2988,6 +3014,38 @@ class JavaScriptFrontend:
             node = head
         return self._get_text(node) if node.type in ("type_identifier", "nested_type_identifier") else ""
 
+    def _declared_local_types(self, body: TSNode) -> Dict[str, str]:
+        """TypeScript: the type each local of a function body is declared with (`const m:
+        EntityManager = ...`) or whose value is cast to (`const m = ctx.manager as SqlEntityManager`),
+        nested functions excluded. A name declared twice with different types names none."""
+        out: Dict[str, str] = {}
+        clash: set = set()
+        stack = list(body.named_children)
+        while stack:
+            n = stack.pop()
+            if n.type in self._FUNC_LIKE or n.type in ("class_declaration", "class"):
+                continue
+            stack.extend(n.named_children)
+            if n.type != "variable_declarator":
+                continue
+            name, annotation, value = (n.child_by_field_name(f) for f in ("name", "type", "value"))
+            if name is None or name.type != "identifier":
+                continue
+            while value is not None and value.type in ("parenthesized_expression", "await_expression") \
+                    and value.named_children:
+                value = value.named_children[0]
+            if annotation is None and value is not None and value.type == "as_expression" \
+                    and len(value.named_children) > 1:
+                annotation = value.named_children[-1]
+            written = self._declared_type_name(annotation) if annotation is not None else ""
+            if not written:
+                continue
+            key = self._get_text(name)
+            if out.get(key, written) != written:
+                clash.add(key)
+            out[key] = written
+        return {k: v for k, v in out.items() if k not in clash}
+
     def _record_type_alias(self, node: TSNode, program: Program) -> None:
         """`type DB = MySql2Database<S> & { $client: Pool }`: a value of type DB is a
         MySql2Database, so a parameter declared DB (here or in a file importing it) is typed by
@@ -3992,6 +4050,7 @@ class JavaScriptFrontend:
         names that value reads. A computed key (`[k]: v`) has no name and is left out."""
         keys: List[str] = []
         reads: Dict[str, List[str]] = {}
+        values: Dict[str, str] = {}
         stack = [(a, str(i), 0) for i, a in enumerate(args)]
         while stack and len(keys) < 96:
             node, path, depth = stack.pop()
@@ -4018,11 +4077,13 @@ class JavaScriptFrontend:
                             names = self._names_read(value)
                             if names:
                                 reads[sub] = names
+                            if value.type in ("true", "false", "null", "undefined", "number"):
+                                values[sub] = self._get_text(value)
                     elif child.type == "shorthand_property_identifier":
                         sub = f"{path}.{self._get_text(child)}"
                         keys.append(sub)
                         reads[sub] = [self._get_text(child)]
-        return {"literal_keys": keys or None, "literal_reads": reads or None}
+        return {"literal_keys": keys or None, "literal_reads": reads or None, "literal_values": values or None}
 
     def _names_read(self, node: TSNode, limit: int = 8) -> List[str]:
         """Variables and dotted member paths an expression reads (`sql`${t.n} + 1`` -> sql, t.n),
@@ -4889,6 +4950,7 @@ class JavaScriptFrontend:
             nested = ExpCall(func_exp, args)
             literal = self._literal_fields(arg_nodes)
             nested.literal_keys, nested.literal_reads = literal["literal_keys"], literal["literal_reads"]
+            nested.literal_values = literal["literal_values"]
             return nested
 
         elif node.type == "regex":
@@ -4989,7 +5051,11 @@ class JavaScriptFrontend:
                         self._add_instr(TaintSink(
                             loc=self._get_location(node), exp=args[arg_idx],
                             kind=kind, description=spec.description, arg_index=arg_idx))
-            return ExpCall(ExpConst.string(f"new {cons_name}"), args)
+            built = ExpCall(ExpConst.string(f"new {cons_name}"), args)
+            literal = self._literal_fields(list(self._get_call_args(node)))   # `new Schema({...}, { option: true })`
+            built.literal_keys, built.literal_reads = literal["literal_keys"], literal["literal_reads"]
+            built.literal_values = literal["literal_values"]
+            return built
 
         elif node.type in self._TS_TRANSPARENT:
             # TypeScript type assertions (`x as string`, `x satisfies T`, `x!`, `<string>x`)

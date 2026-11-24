@@ -269,7 +269,7 @@ Exit status, for every command that checks something: 0 clean, 1 findings (or vi
 | `--baseline FILE` / `--write-baseline FILE` | report only findings not in the baseline / record this run's findings |
 | `--root DIR` | the root that finding paths and fingerprints are relative to |
 | `--no-cross-file` | analyse each file alone |
-| `--cross-file-limit N` | most files of one language family (Python; JavaScript and TypeScript; Java and C#) one cross-file analysis spans (default 2000); a family over it is analysed file by file, with a warning |
+| `--cross-file-limit N` | most files of one language family (Python; JavaScript and TypeScript; Java and C#) one cross-file analysis spans (default 2000); a family over it is analysed in groups of files that import one another, each within the limit, with a warning (imports between groups do not resolve) |
 | `--pack PATH` / `--no-packs` | load an extra pack (repeatable) / skip the built-in packs |
 | `--verify-secrets` | ask each found credential's provider whether it still works ([secrets.md](secrets.md#verifying-with-the-provider); network, off by default) |
 | `--confirm-proofs` | compile and run each directly constructible C integer-overflow or out-of-bounds finding under AddressSanitizer+UndefinedBehaviorSanitizer; an observed fault raises it to the `exploit-confirmed` evidence level (runs compiled code, opt-in, offline, no model; [ai.md](ai.md#proof-carrying-findings---confirm-proofs)) |

@@ -242,6 +242,24 @@
 "sails.getDatastore" = "sails.Datastore"
 # Prisma Client: `$extends` returns an extended client with the same methods.
 "@prisma/client.PrismaClient.$extends" = "@prisma/client.PrismaClient"
+# MikroORM's SQL drivers (mikro-orm.io/api/knex/class/SqlEntityManager): an EntityManager's
+# getKnex() is its knex instance and getTransactionContext() the knex transaction it runs in (used
+# as the knex instance, as knex's own transaction handlers are). Medusa re-exports the drivers
+# under @medusajs/framework/mikro-orm/*.
+"@mikro-orm/knex.SqlEntityManager.getKnex" = "knex"
+"@mikro-orm/knex.SqlEntityManager.getTransactionContext" = "knex"
+"@mikro-orm/postgresql.SqlEntityManager.getKnex" = "knex"
+"@mikro-orm/postgresql.SqlEntityManager.getTransactionContext" = "knex"
+"@mikro-orm/mysql.SqlEntityManager.getKnex" = "knex"
+"@mikro-orm/mysql.SqlEntityManager.getTransactionContext" = "knex"
+"@mikro-orm/mariadb.SqlEntityManager.getKnex" = "knex"
+"@mikro-orm/mariadb.SqlEntityManager.getTransactionContext" = "knex"
+"@mikro-orm/sqlite.SqlEntityManager.getKnex" = "knex"
+"@mikro-orm/sqlite.SqlEntityManager.getTransactionContext" = "knex"
+"@medusajs/framework/mikro-orm/postgresql.SqlEntityManager.getKnex" = "knex"
+"@medusajs/framework/mikro-orm/postgresql.SqlEntityManager.getTransactionContext" = "knex"
+"@medusajs/framework/mikro-orm/knex.SqlEntityManager.getKnex" = "knex"
+"@medusajs/framework/mikro-orm/knex.SqlEntityManager.getTransactionContext" = "knex"
 # TypeORM (typeorm.io): a DataSource's manager is an EntityManager; getRepository returns a
 # Repository; createQueryBuilder a SelectQueryBuilder, whose clause methods return it again.
 "typeorm.DataSource.manager" = "typeorm.EntityManager"
@@ -389,3 +407,6 @@
 "Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions.AddDefaultPolicy" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
 "Microsoft.AspNetCore.Builder.IApplicationBuilder.UseCors" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
 "Microsoft.AspNetCore.Builder.WebApplication.UseCors" = { arg = 0, params = ["Microsoft.AspNetCore.Cors.Infrastructure.CorsPolicyBuilder"] }
+# EF Core's model builder: `modelBuilder.Entity<P>(b => ...)` configures P through an EntityTypeBuilder
+# (https://learn.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.modelbuilder.entity)
+"Microsoft.EntityFrameworkCore.ModelBuilder.Entity" = { arg = 0, params = ["Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder"] }

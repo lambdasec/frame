@@ -327,9 +327,29 @@ class JavaFrontend:
                 for d in member.named_children:
                     if d.type == "variable_declarator" and d.child_by_field_name("name") is not None:
                         fields.append(self._get_text(d.child_by_field_name("name")))
+        type_params: List[str] = []
+        tps = node.child_by_field_name("type_parameters")
+        for tp in (tps.named_children if tps is not None else ()):
+            ident = next((c for c in tp.named_children if c.type in ("type_identifier", "identifier")), None)
+            if tp.type == "type_parameter" and ident is not None:
+                type_params.append(self._get_text(ident))
+        base_args: Dict[str, List[str]] = {}
+        holders = [node.child_by_field_name(f) for f in ("superclass", "interfaces")]
+        holders += [c for c in node.named_children if c.type == "extends_interfaces"]
+        for h in holders:
+            for g in (self._descendants(h, stop=()) if h is not None else ()):
+                if g.type != "generic_type" or not g.named_children:
+                    continue
+                args = next((c for c in g.named_children if c.type == "type_arguments"), None)
+                if args is None:
+                    continue
+                head = self._get_text(g.named_children[0]).split("<")[0].rsplit(".", 1)[-1]
+                base_args.setdefault(head, [self._get_text(a).split("<")[0].rsplit(".", 1)[-1].strip()
+                                            for a in args.named_children])
         program.class_info[name] = ClassInfo(
             name=name, kind=kind, bases=bases, fields=fields,
             field_annotations=field_annotations, field_types=field_types,
+            type_params=type_params, base_type_args=base_args,
             canonical_bases=[self._imports.resolve(b) or self._local_types.get(b) or b for b in bases],
             annotations=[parse_annotation(a, self._imports, value_alias=True)
                          for a in self._get_annotations(node)],
