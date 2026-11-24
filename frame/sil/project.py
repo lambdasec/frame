@@ -1651,13 +1651,21 @@ def _link_java_library_bases(programs: Dict[str, Any], index: "ProjectIndex", ke
     for proc in program.procedures.values():
         for node in proc.nodes.values():
             for i in node.instrs:
-                if not isinstance(i, Call) or i.canonical is not None:
+                if not isinstance(i, Call):
                     continue
                 typ = getattr(i, "receiver_type", None) or ""
                 func = str(getattr(i.func, "value", i.func))
                 head, dot, method = func.rpartition(".")
                 if not dot or not method.isidentifier():
                     continue
+                if i.canonical is not None:
+                    # the frontend named it after a type this file declares (`AccountRepository`
+                    # beside the service using it): the same call as when the type is in its own
+                    # file, so the same library base
+                    simple = typ.split("<", 1)[0].rsplit(".", 1)[-1]
+                    if not simple or simple not in (getattr(program, "class_info", None) or {}) \
+                            or not str(i.canonical).endswith(f".{simple}.{method}"):
+                        continue
                 where = key
                 if not typ:
                     found = _java_inherited_field_type(programs, index, key, proc, head)

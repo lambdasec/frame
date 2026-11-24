@@ -7,8 +7,10 @@ secret asks whether one caller can send as many guesses as it likes:
            its class (`@ratelimit`, `@limiter.limit`, `@UseGuards(ThrottlerGuard)`,
            `[EnableRateLimiting]`), limiter middleware in its own route registration
            (`app.post("/login", limiter, h)`, `.RequireRateLimiting(...)`), a call in it or a
-           function it calls that spends an attempt (`limiter.consume(ip)`), or every caller is
-           so covered;
+           function it calls that spends an attempt (`limiter.consume(ip)`), a lockout it keeps
+           in stored data (it counts failures in a field, `acct.failures += 1` then a save, and
+           every path to the check passes a branch on that field one arm of which refuses), or
+           every caller is so covered;
   refuted  it compares a guess with a stored secret, and nothing in it, its class, its route, its
            callers or the application's configuration limits attempts, and it writes no stored
            data a lockout could count with;
@@ -16,7 +18,7 @@ secret asks whether one caller can send as many guesses as it likes:
            (`app.use(limiter)`, a global guard, Flask-Limiter defaults, django-axes), a class
            attribute whose value the engine does not read, some callers covered and others not,
            a write of stored data or of a cache / Redis (`state`) on the path (an attempt counter
-           the application keeps itself), a check made inside a function handed to a project
+           the application may enforce elsewhere: counted but not refused on here), a check made inside a function handed to a project
            function (`throttle.verify(() => check(pw))`: that function decides when it runs), or
            a check known only from a library base class (the library calls back into project
            code the engine does not follow: a form, a hook).
@@ -582,6 +584,217 @@ def _wrapped_check(ctx, program, file: str, proc_name: str) -> Optional[Tuple[st
     return None
 
 
+# -- a lockout the application keeps itself ------------------------------------------------
+
+_ACCESSOR = __import__("re").compile(r"^(?:get|is|set)([A-Z]\w*)$")
+
+
+def _field_of(name: str) -> str:
+    """The stored field a path or accessor names: `acct.failures` -> failures,
+    `user.getFailedAttempts` / `setFailedAttempts` -> failedAttempts."""
+    last = str(name).rsplit(".", 1)[-1]
+    m = _ACCESSOR.match(last)
+    return (m.group(1)[:1].lower() + m.group(1)[1:]) if m else last
+
+
+def _self_increments(proc) -> Dict[str, int]:
+    """field -> line where the function stores a field computed from its own value
+    (`acct.failures += 1`, `user.setFailedAttempts(user.getFailedAttempts() + 1)`)."""
+    from frame.sil.concurrency import _value_names
+    from frame.sil.hunt_tools import _nested_call_names
+    defs = _definitions(proc)
+    out: Dict[str, int] = {}
+    for ins in _instrs(proc):
+        kind = type(ins).__name__
+        if kind == "Assign":
+            target = str(getattr(ins, "id", "") or "")
+            if "." in target and target in _expand(defs, _value_names(getattr(ins, "exp", None))):
+                out.setdefault(target.rsplit(".", 1)[-1], _line(ins))
+        elif kind == "Call":
+            func = _func_text(ins)
+            head, _, method = func.rpartition(".")
+            if not head or not method.startswith("set") or not _ACCESSOR.match(method):
+                continue
+            field = _field_of(method)
+            args = [a[0] if isinstance(a, tuple) else a for a in getattr(ins, "args", None) or []]
+            read = _expand(defs, list(_nested_call_names(ins)) + [n for a in args for n in _value_names(a)])
+            if any(r.rpartition(".")[0] == head and _field_of(r) == field for r in read):
+                out.setdefault(field, _line(ins))
+    return out
+
+
+def _func_text(ins) -> str:
+    func = getattr(ins, "func", None)
+    return str(getattr(func, "value", func) or "").strip('"')
+
+
+def _definitions(proc) -> Dict[str, Set[str]]:
+    """name -> what its definitions read: an assigned expression's names, a call's callee (Java
+    hoists `a.getFailedAttempts()` into a temporary before `+ 1`)."""
+    from frame.sil.concurrency import _ret_name, _value_names
+    defs: Dict[str, Set[str]] = {}
+    for ins in _instrs(proc):
+        kind = type(ins).__name__
+        if kind == "Assign":
+            defs.setdefault(str(getattr(ins, "id", "") or ""), set()).update(
+                str(n) for n in _value_names(getattr(ins, "exp", None)))
+        elif kind == "Call" and _ret_name(ins):
+            defs.setdefault(_ret_name(ins), set()).add(_func_text(ins))
+    return defs
+
+
+def _expand(defs: Dict[str, Set[str]], names, hops: int = 4) -> Set[str]:
+    """`names` and what the temporaries among them were computed from (a few hops)."""
+    out = {str(n) for n in names}
+    frontier = set(out)
+    for _ in range(hops):
+        nxt = {m for n in frontier if n.startswith("$") for m in defs.get(n, ())} - out
+        if not nxt:
+            break
+        out |= nxt
+        frontier = nxt
+    return out
+
+
+def _counters(ctx, program, file: str, proc_name: str) -> Dict[str, str]:
+    """field -> where the function, or a project function it calls (CALLEE_DEPTH deep), counts in
+    stored data: a self-increment followed by a write of stored data, or an atomic write
+    (`update(failures=F("failures") + 1)`)."""
+    from frame.sil.concurrency import events
+    out: Dict[str, str] = {}
+    seen = {(file, proc_name)}
+    frontier = [(program, file, proc_name)]
+    for depth in range(CALLEE_DEPTH + 1):
+        nxt = []
+        for prog, f, name in frontier:
+            proc = (getattr(prog, "procedures", {}) or {}).get(name)
+            if proc is None:
+                continue
+            try:
+                ev, _ = events(prog, proc, ctx=ctx, file=f)
+            except Exception:
+                continue
+            for field, ln in _self_increments(proc).items():
+                if any(w >= ln for w in ev.writes):
+                    out.setdefault(field, f"line {ln} of {name}")
+            for ln, w in ev.writes.items():
+                if w.how == "atomic":
+                    for field in w.fields:
+                        out.setdefault(field, f"line {ln} of {name}")
+            if not hasattr(ctx, "graph") or depth == CALLEE_DEPTH:
+                continue
+            try:
+                _, calls = ctx.graph()
+                for callee, _ln in (calls.get((f, name)) or [])[:40]:
+                    d = ctx.resolve_call(f, name, callee)
+                    if d is None or (d["file"], d["name"]) in seen:
+                        continue
+                    seen.add((d["file"], d["name"]))
+                    loc = ctx.locate(d["name"], d["file"] or None)
+                    if loc is not None and loc.get("program") is not None:
+                        nxt.append((loc["program"], d["file"], loc["proc"]))
+            except Exception:
+                continue
+        frontier = nxt
+    return out
+
+
+def _tested_fields(ctx, program, file: str, proc, ins) -> Set[str]:
+    """Stored fields a branch condition tests: paths and accessors written in it, and the fields
+    a project function called in it (or whose result it tests) branches on."""
+    from frame.sil.concurrency import _summary, _value_names
+    from frame.sil.hunt_tools import _nested_call_names
+    names = _expand(_definitions(proc), list(_value_names(getattr(ins, "condition", None)))
+                    + list(_nested_call_names(ins)))
+    out = {_field_of(n) for n in names if "." in n and not n.startswith("$")}
+    for callee in [n for n in names if not n.startswith("$")]:  # `if is_locked(acct):`
+        try:
+            d = ctx.resolve_call(file, proc.name, callee) if hasattr(ctx, "resolve_call") else None
+        except Exception:
+            d = None
+        if d is None:
+            continue
+        try:
+            summary = _summary(ctx, d["file"], d["name"], 1)
+        except Exception:
+            summary = None
+        out |= set((summary or {}).get("decides") or ())
+        loc = ctx.locate(d["name"], d["file"] or None)
+        callee_proc = (getattr(loc.get("program"), "procedures", {}) or {}).get(loc["proc"]) if loc else None
+        if callee_proc is not None:                   # `return acct.failures >= 5`
+            out |= _returned_fields(callee_proc)
+    return out
+
+
+def _returned_fields(proc) -> Set[str]:
+    """Stored fields the value a function returns is computed from."""
+    from frame.sil.concurrency import _value_names
+    defs = _definitions(proc)
+    rets = set()
+    for ins in _instrs(proc):
+        if type(ins).__name__ == "Return":
+            rets |= {str(n) for n in _value_names(getattr(ins, "exp", None) or getattr(ins, "value", None))}
+    rets |= {n for n in defs if n.rsplit(".", 1)[-1] in ("__return_val", "$ret") or n.startswith("$ret")}
+    names = _expand(defs, rets | {m for n in rets for m in defs.get(n, ())})
+    return {_field_of(n) for n in names if "." in n and not n.startswith("$")}
+
+
+def _lockout(ctx, program, file: str, proc_name: str, cred_line: int) -> Optional[str]:
+    """How the function locks the caller out, when it does: it counts in a stored field (see
+    `_counters`), every path from its entry to the credential check passes a branch testing that
+    field, and one arm of such a branch never reaches the check (it refuses). A branch whose arms
+    both go on to the check (logging the count) decides nothing."""
+    proc = (getattr(program, "procedures", {}) or {}).get(proc_name)
+    if proc is None or not cred_line:
+        return None
+    counters = _counters(ctx, program, file, proc_name)
+    if not counters:
+        return None
+    nodes = getattr(proc, "nodes", {}) or {}
+    ends = {nid for nid, n in nodes.items()
+            if any(type(i).__name__ == "Return" for i in getattr(n, "instrs", []) or [])}
+    target = {nid for nid, n in nodes.items() if any(_line(i) == cred_line for i in getattr(n, "instrs", []) or [])}
+    guards: Dict[Any, Set[str]] = {}
+    for nid, n in nodes.items():
+        for i in getattr(n, "instrs", []) or []:
+            if type(i).__name__ == "Prune" and _line(i) <= cred_line:
+                hit = _tested_fields(ctx, program, file, proc, i) & set(counters)
+                if hit:
+                    guards.setdefault(nid, set()).update(hit)
+    if not target or not guards or target & set(guards):
+        return None
+
+    def succ_ids(nid):
+        if nid in ends:
+            return []
+        return [getattr(s, "id", s) for s in getattr(nodes[nid], "succs", []) or []]
+
+    def reaches(start, avoid) -> bool:
+        stack, seen = [start], set()
+        while stack:
+            nid = stack.pop()
+            if nid in seen or nid in avoid or nid not in nodes:
+                continue
+            if nid in target:
+                return True
+            seen.add(nid)
+            stack += succ_ids(nid)
+        return False
+
+    entry = getattr(getattr(proc, "entry_node", None), "id", getattr(proc, "entry_node", None))
+    if reaches(entry, set(guards)):
+        return None                                   # a path to the check tests no counter
+    for g, fields in guards.items():
+        for s in succ_ids(g):
+            if not reaches(s, set()):
+                field = sorted(fields)[0]
+                line = min((_line(i) for i in getattr(nodes[g], "instrs", []) or []
+                            if type(i).__name__ == "Prune"), default=0)
+                return (f"a lockout: the branch at line {line} tests {field}, which is counted at "
+                        f"{counters[field]}, and refuses before the check at line {cred_line}")
+    return None
+
+
 def _writes_stored_data(ctx, program, file: str, proc_name: str) -> bool:
     vf = (getattr(program, "value_facts", None) or {}).get(proc_name) or {}
     if vf.get("writes") or vf.get("may_write"):
@@ -632,6 +845,10 @@ def check_attempt_limit(ctx, program, proc_name: str, file: str) -> Dict[str, An
     if cred is None:
         return {**unknown, "reason": f"{proc_name} does not compare a guess with a stored secret the "
                 "engine recognises: ask at the function that does"}
+    if cred[1] == "call":
+        locked = _lockout(ctx, program, file, proc_name, cred[0])
+        if locked:
+            return {"verdict": "proved", "witness": [], "reason": f"attempts are limited: {locked}"}
     if covered:
         return {**unknown, "reason": f"some callers limit attempts ({', '.join(covered[:3])}) and "
                 f"others do not ({', '.join(uncovered[:3])}): check which routes reach it"}
@@ -664,6 +881,11 @@ def check_attempt_limit(ctx, program, proc_name: str, file: str) -> Dict[str, An
         return {**unknown, "reason": f"{own['undecided'][0]}: whether the call counts the failure "
                 "depends on it; read where it comes from"}
     if _writes_stored_data(ctx, program, file, proc_name):
+        counted = _counters(ctx, program, file, proc_name) if cred[1] == "call" else {}
+        if counted:
+            field = sorted(counted)[0]
+            return {**unknown, "reason": f"{proc_name} counts in {field} ({counted[field]}), but no branch "
+                    f"before the check at line {cred[0]} refuses on it: read where the count is enforced"}
         return {**unknown, "reason": f"{proc_name} writes stored data: it may count failed attempts "
                 "itself (a lockout); read it"}
     exempt = " (its limiter is switched off)" if own["exempt"] else ""

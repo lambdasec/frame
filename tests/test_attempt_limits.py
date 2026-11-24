@@ -348,8 +348,8 @@ def pin_check(request):
 def test_a_write_of_stored_data_may_be_an_attempt_counter(tmp_path):
     ctx = _ctx(tmp_path, {"app/views.py": COUNTER})
     r = _verdict(ctx, "pin_login")
-    assert r["verdict"] == "unknown", r
-    assert "count failed attempts" in r["reason"]
+    assert r["verdict"] == "unknown", r                     # counted, but nothing here refuses on it
+    assert "counts in failures" in r["reason"]
     assert _verdict(ctx, "pin_check")["verdict"] == "refuted"
 
 
@@ -568,3 +568,168 @@ def test_a_limiter_and_a_credential_check_written_in_a_condition(tmp_path):
     pin = _verdict(ctx, "LoginController.pin")
     assert pin["verdict"] == "refuted", pin                 # the check is the condition itself
     assert pin["witness"][0]["line"] == 28
+
+
+LOCKOUT = """\
+from django.contrib.auth.hashers import check_password
+from django.db import models
+from django.db.models import F
+from django.http import HttpResponse
+
+
+class Account(models.Model):
+    pin = models.CharField(max_length=128)
+    failures = models.IntegerField(default=0)
+
+
+def locked_login(request):
+    acct = Account.objects.get(name=request.POST["u"])
+    if acct.failures >= 5:
+        return HttpResponse("locked")
+    if not check_password(request.POST["pin"], acct.pin):
+        acct.failures += 1
+        acct.save()
+        return HttpResponse("no")
+    return HttpResponse("ok")
+
+
+def logged_login(request):
+    acct = Account.objects.get(name=request.POST["u"])
+    if acct.failures >= 5:
+        print("many failures")
+    if not check_password(request.POST["pin"], acct.pin):
+        Account.objects.filter(pk=acct.pk).update(failures=F("failures") + 1)
+        return HttpResponse("no")
+    return HttpResponse("ok")
+
+
+def pin_login(request):
+    acct = Account.objects.get(name=request.POST["u"])
+    if not check_password(request.POST["pin"], acct.pin):
+        acct.failures += 1
+        acct.save()
+        return HttpResponse("no")
+    return HttpResponse("ok")
+"""
+
+
+def test_a_lockout_kept_in_stored_data(tmp_path):
+    ctx = _ctx(tmp_path, {"app/views.py": LOCKOUT})
+    r = _verdict(ctx, "locked_login")
+    assert r["verdict"] == "proved", r                      # refuses on the count before the check
+    assert "failures" in r["reason"] and "line 14" in r["reason"]
+    # a branch on the count whose arms both go on to the check refuses nothing
+    assert _verdict(ctx, "logged_login")["verdict"] == "unknown"
+    assert _verdict(ctx, "pin_login")["verdict"] == "unknown"
+
+
+HELPER_LOCKOUT = """\
+from django.contrib.auth.hashers import check_password
+from django.db import models
+from django.http import HttpResponse
+
+
+class Account(models.Model):
+    pin = models.CharField(max_length=128)
+    failures = models.IntegerField(default=0)
+
+
+def is_locked(acct):
+    return acct.failures >= 5
+
+
+def record_failure(acct):
+    acct.failures += 1
+    acct.save()
+
+
+def helper_login(request):
+    acct = Account.objects.get(name=request.POST["u"])
+    if is_locked(acct):
+        return HttpResponse("locked")
+    if not check_password(request.POST["pin"], acct.pin):
+        record_failure(acct)
+        return HttpResponse("no")
+    return HttpResponse("ok")
+"""
+
+
+def test_a_lockout_through_helpers(tmp_path):
+    # the count is tested by a helper's returned comparison and kept by another helper
+    ctx = _ctx(tmp_path, {"app/views.py": HELPER_LOCKOUT})
+    r = _verdict(ctx, "helper_login")
+    assert r["verdict"] == "proved", r
+    assert "record_failure" in r["reason"]
+
+
+ACCOUNT = """\
+package com.acme;
+
+import jakarta.persistence.Entity;
+
+@Entity
+public class Account {
+    private int failedAttempts;
+    private String hash;
+    public int getFailedAttempts() { return failedAttempts; }
+    public void setFailedAttempts(int n) { failedAttempts = n; }
+    public String getHash() { return hash; }
+}
+
+"""
+
+LOGIN_SERVICE = """\
+package com.acme;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+interface AccountRepository extends JpaRepository<Account, Long> {
+    Account findByName(String name);
+}
+
+public class LoginService {
+    private final AccountRepository accounts;
+    private final PasswordEncoder encoder;
+
+    public LoginService(AccountRepository accounts, PasswordEncoder encoder) {
+        this.accounts = accounts;
+        this.encoder = encoder;
+    }
+
+    public boolean login(String name, String password) {
+        Account a = accounts.findByName(name);
+        if (a.getFailedAttempts() >= 5) {
+            throw new IllegalStateException("locked");
+        }
+        if (!encoder.matches(password, a.getHash())) {
+            a.setFailedAttempts(a.getFailedAttempts() + 1);
+            accounts.save(a);
+            return false;
+        }
+        return true;
+    }
+
+    public boolean audit(String name, String password) {
+        Account a = accounts.findByName(name);
+        if (!encoder.matches(password, a.getHash())) {
+            a.setFailedAttempts(a.getFailedAttempts() + 1);
+            accounts.save(a);
+            return false;
+        }
+        return true;
+    }
+}
+"""
+
+
+def test_a_lockout_through_accessors_and_a_repository_beside_the_service(tmp_path):
+    # `accounts.save(a)` on a Spring Data repository declared in the service's own file is the
+    # library's save, as when the repository has a file of its own
+    ctx = _ctx(tmp_path, {"com/acme/Account.java": ACCOUNT, "com/acme/LoginService.java": LOGIN_SERVICE})
+    r = _verdict(ctx, "LoginService.login")
+    assert r["verdict"] == "proved", r
+    assert "failedAttempts" in r["reason"]
+    audit = _verdict(ctx, "LoginService.audit")
+    assert audit["verdict"] == "unknown", audit
+    assert "counts in failedAttempts" in audit["reason"]
