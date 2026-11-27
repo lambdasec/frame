@@ -1273,12 +1273,30 @@ def _load_dependency_findings(raw: str) -> List[dict]:
     return []
 
 
+# Reproduction runners by the language of the call site's file.
+_REPRO_LANGUAGES = {"python": "python", "javascript": "javascript", "typescript": "typescript",
+                    "java": "java", "csharp": "csharp"}
+_DRIVER_SUFFIX = {"javascript": ".js", "typescript": ".ts", "java": ".java", "csharp": ".cs"}
+
+
+def _repro_language(spec) -> Optional[str]:
+    """The runner for a reproduction spec, from the file of its call site; None when no
+    runner exists for that language (C/C++ findings are confirmed by --confirm-proofs)."""
+    from frame.sil.scanner import language_for_file
+    path = spec.module_path
+    if not path:
+        return "python"
+    return _REPRO_LANGUAGES.get(language_for_file(path) or "")
+
+
 def _cmd_exploit_deps(args, config) -> int:
     """`frame exploit --deps`: turn SCA reachability into runnable reproduction tests.
 
     For each finding where attacker data reaches a vulnerable library function, a seeded
     agent drives the project to that call and a harness spy confirms the marker arrives
-    there through the project; a confirmed reproduction is written as a pytest."""
+    there through the project. The runner follows the call site's language (Python,
+    JavaScript/TypeScript, Java, C#); a confirmed Python reproduction is written as a
+    pytest, any other as its confirmed driver."""
     from frame.sil.proof_deps import (
         deps_repro_spec, taint_repro_spec, python_deps_test_with_driver, fix_proof,
     )
@@ -1318,7 +1336,13 @@ def _cmd_exploit_deps(args, config) -> int:
         label = f"{spec.advisory} {spec.package}=={spec.version}" if spec.package else spec.advisory
         print(f"[repro] {label}: reaching {spec.vuln_function} at {spec.call_site} ...",
               file=sys.stderr)
-        rep = reproduce_deps_finding(spec, root, config, max_steps=args.max_steps or 8)
+        language = _repro_language(spec)
+        if language is None:
+            print(f"[repro]   skipped: no reproduction runner for {spec.module_path}",
+                  file=sys.stderr)
+            continue
+        rep = reproduce_deps_finding(spec, root, config, language=language,
+                                     max_steps=args.max_steps or 8)
         if not rep.reproduced:
             print(f"[repro]   not reproduced: {rep.detail}", file=sys.stderr)
             continue
@@ -1328,13 +1352,21 @@ def _cmd_exploit_deps(args, config) -> int:
             import re as _re
             stem = _re.sub(r"[^A-Za-z0-9_.-]", "_",
                            f"{spec.advisory}_{spec.package or spec.call_site}")
-            path = out_dir / f"test_{stem}.py"
-            path.write_text(python_deps_test_with_driver(spec, rep.driver))
+            if language == "python":
+                path = out_dir / f"test_{stem}.py"
+                path.write_text(python_deps_test_with_driver(spec, rep.driver))
+            else:
+                path = out_dir / f"repro_{stem}{_DRIVER_SUFFIX[language]}"
+                path.write_text(
+                    f"// Frame reproduction driver for {spec.advisory}: attacker data reaches\n"
+                    f"// {spec.vuln_function} at {spec.call_site}. Confirmed by the {language}\n"
+                    f"// spy runner; re-run with `frame exploit --deps`.\n\n"
+                    + rep.driver.rstrip() + "\n")
             print(f"[repro]   wrote {path}", file=sys.stderr)
         # Fix-loop tie-in: re-run the confirmed driver against the fixed copy. The fix
         # is verified when the reproduction no longer reaches the sink via the project.
         if check_fixed:
-            fp = fix_proof(rep.driver, spec, root, check_fixed, language="python")
+            fp = fix_proof(rep.driver, spec, root, check_fixed, language=language)
             if fp.proved:
                 fixes_verified += 1
                 print(f"[repro]   fix verified against {check_fixed}: the reproduction no longer triggers",

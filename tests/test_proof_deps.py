@@ -361,3 +361,46 @@ def test_fix_proof_not_proved_when_the_flow_remains(tmp_path):
                       language="python")
     assert proof.before.reproduced and proof.after.reproduced
     assert not proof.proved
+
+
+def test_exploit_deps_runs_each_finding_in_its_call_sites_language(monkeypatch, tmp_path):
+    # The runner, the fix check and the written file follow the call site's language:
+    # a Java finding must not go to the Python runner.
+    import argparse
+    import json as J
+    import frame.cli as cli
+    import frame.sil.proof_deps as pd
+    import frame.sil.proof_deps_reproduce as pdr
+    seen = []
+
+    def fake_reproduce(spec, root, config, *, language="python", **kw):
+        seen.append(("reproduce", spec.module_path, language))
+        return pdr.DepsReproduceResult(True, driver="new app.Api().ping(MARKER);")
+
+    def fake_fix(driver, spec, root, fixed, *, language="python"):
+        seen.append(("fix", spec.module_path, language))
+        return pd.FixProof(True, pd.DepsRun(True, ran=True), pd.DepsRun(False, ran=True))
+
+    monkeypatch.setattr(pdr, "reproduce_deps_finding", fake_reproduce)
+    monkeypatch.setattr(pd, "fix_proof", fake_fix)
+    findings = [{"type": "command_injection", "cwe_id": "CWE-78", "sink_call": sink,
+                 "location": loc, "line": 3, "source_var": "host", "category": "taint"}
+                for sink, loc in (("os.system", "app.py"),
+                                  ("java.lang.Runtime.exec", "app/Api.java"),
+                                  ("child_process.exec", "routes.js"),
+                                  ("system", "main.c"))]
+    guidance = tmp_path / "f.json"
+    guidance.write_text(J.dumps({"vulnerabilities": findings}))
+    out = tmp_path / "out"
+    args = argparse.Namespace(guidance=str(guidance), root=str(tmp_path), out_dir=str(out),
+                              check_fixed=str(tmp_path), max_steps=None)
+    assert cli._cmd_exploit_deps(args, None) == 0
+    assert ("reproduce", "app/Api.java", "java") in seen
+    assert ("fix", "app/Api.java", "java") in seen
+    assert ("reproduce", "routes.js", "javascript") in seen
+    assert ("reproduce", "app.py", "python") in seen
+    assert not any(path == "main.c" for _, path, _ in seen)      # no runner for C
+    names = sorted(p.name for p in out.iterdir())
+    assert any(n.startswith("test_") and n.endswith(".py") for n in names)
+    java = [n for n in names if n.endswith(".java")]
+    assert java and "new app.Api().ping(MARKER);" in (out / java[0]).read_text()

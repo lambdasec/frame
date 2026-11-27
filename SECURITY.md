@@ -56,6 +56,6 @@ Each of the following is opt-in, and runs code or reaches the network only when 
 | `frame scan --render-helm` | runs `helm template` |
 | `frame scan --verify-secrets`, `frame history --verify` | send each found credential to its own provider's verification URL, and nowhere else |
 | `frame scan --confirm-proofs` | compiles and runs C harnesses built from your code under sanitizers |
-| `frame scan --ai`, `--hunt-authz`, `--reproduce-proofs`, `frame fix`, `frame exploit` | send code to the model endpoint you configure (`[llm]`), which can be a local model; `--reproduce-proofs` and `frame exploit --deps` also run your code to confirm a reproduction, and `frame exploit --target` runs commands against a target you are authorized to test |
+| `frame scan --ai`, `--hunt-authz`, `--hunt`, `--reproduce-proofs`, `frame fix`, `frame exploit` | send code to the model endpoint you configure (`[llm]`), which can be a local model; `--reproduce-proofs` and `frame exploit --deps` also run your code to confirm a reproduction, and `frame exploit --target` runs commands against a target you are authorized to test |
 
 Run the opt-in options that execute code only on repositories you trust, or in a sandbox.

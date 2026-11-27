@@ -11,7 +11,7 @@ Frame is the open-source application security platform: code (SAST), dependencie
 
 ## Built
 
-- **SAST** across Python, JavaScript/TypeScript, Java, C# and C/C++: cross-file taint, 100+ finding types, 110 framework packs, C/C++ memory safety decided by the separation logic engine. ([coverage](coverage.md), [engine](engine.md))
+- **SAST** across Python, JavaScript/TypeScript, Java, C# and C/C++: cross-file taint, 100+ finding types, 121 framework packs, C/C++ memory safety decided by the separation logic engine. ([coverage](coverage.md), [engine](engine.md))
 - **SCA** for 11 ecosystems plus C/C++ and vendored copies: offline OSV matching, reachability ranking, upgrade plans Frame applies and verifies, code and configuration mitigations, licences, SBOM, VEX, container images. ([dependencies](dependencies.md))
 - **Secrets** by name and by provider format, in code and across git history, with live verification. ([secrets](secrets.md))
 - **Infrastructure as code**: Kubernetes, Dockerfiles, Terraform (AWS, Azure, Google Cloud) and CloudFormation, every policy decided with Z3. ([iac](iac.md))

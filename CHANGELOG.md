@@ -4,6 +4,14 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- `frame exploit --deps` ran every finding through the Python runner, so a JavaScript/TypeScript, Java or C# finding could not reproduce from the CLI. The runner, and the `--check-fixed` run, now follow the language of the call site's file; a C/C++ finding is skipped (`--confirm-proofs` covers those), and `--out-dir` writes a Python reproduction as a pytest and any other as its confirmed driver.
+
+### Documentation
+
+- The README, the docs and examples indexes, and the roadmap describe the business-logic hunt, invariants as data and `frame query`; four examples that were unlisted are listed; the framework pack count is 121; a C proof is confirmed only by a sanitizer report, as the code does.
+
 ## [1.2.0] - 2026-11-24
 
 ### Added
