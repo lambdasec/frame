@@ -4,6 +4,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-27
+
 ### Fixed
 
 - `frame exploit --deps` ran every finding through the Python runner, so a JavaScript/TypeScript, Java or C# finding could not reproduce from the CLI. The runner, and the `--check-fixed` run, now follow the language of the call site's file; a C/C++ finding is skipped (`--confirm-proofs` covers those), and `--out-dir` writes a Python reproduction as a pytest and any other as its confirmed driver.
@@ -196,7 +198,8 @@ All notable changes to Frame are recorded here. The format follows [Keep a Chang
 
 The first stable release: five languages (Python, JavaScript/TypeScript, Java, C# and C/C++), cross-file taint by default, 70+ framework packs, `--changed` / baselines / `frame verify` for CI and coding agents, the GitHub Action and pre-commit hook, the optional AI layer (detect, triage, exploit, fix), and the separation logic engine on Z3.
 
-[Unreleased]: https://github.com/lambdasec/frame/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/lambdasec/frame/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/lambdasec/frame/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/lambdasec/frame/compare/v1.1.12...v1.2.0
 [1.1.12]: https://github.com/lambdasec/frame/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/lambdasec/frame/compare/v1.1.10...v1.1.11
